@@ -3,6 +3,7 @@ package com.example.boltassist
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
@@ -14,6 +15,10 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.util.Calendar
 import kotlin.math.max
 
 class OverlayService : Service() {
@@ -23,10 +28,17 @@ class OverlayService : Service() {
 
     private var amount = 0f
     private var isRunning = false
+    private val ioScope = CoroutineScope(Dispatchers.IO)
+    private var currentRide: Ride? = null
+    private lateinit var trackRecorder: TrackRecorder
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        
+        // Initialize MapMatcher and TrackRecorder
+        MapMatcherHelper.init(this)
+        trackRecorder = TrackRecorder(this)
 
         overlayView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -122,21 +134,112 @@ class OverlayService : Service() {
         if (::overlayView.isInitialized) {
             windowManager.removeView(overlayView)
         }
+        if (::trackRecorder.isInitialized) {
+            trackRecorder.cleanUp()
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun onRideStart() {
+        // Get current time
+        val startTs = System.currentTimeMillis()
+
+        // Get current location
+        val loc: Location? = LocationHelper.getLastKnownLocation(this)
+        val pickupLat = loc?.latitude ?: 0.0
+        val pickupLon = loc?.longitude ?: 0.0
+
+        // Snap to nearest edge
+        val pickupEdge = MapMatcherHelper.findClosestEdge(pickupLat, pickupLon)
+
+        // Create new Ride object with incomplete data
+        currentRide = Ride(
+            startTs = startTs,
+            endTs = 0L,
+            amount = 0f,
+            pickupLat = pickupLat,
+            pickupLon = pickupLon,
+            pickupEdge = pickupEdge,
+            dropLat = null,
+            dropLon = null,
+            dropEdge = null
+        )
+
+        // Start GPS tracking
+        trackRecorder.startRecording()
+        
         Toast.makeText(this, "Ride started", Toast.LENGTH_SHORT).show()
     }
 
     private fun onRideStop() {
-        Toast.makeText(this, String.format("Ride stopped: %.2f zł", amount), Toast.LENGTH_SHORT).show()
-        amount = 0f
+        // Get current time
+        val endTs = System.currentTimeMillis()
+
+        // Get current location
+        val loc: Location? = LocationHelper.getLastKnownLocation(this)
+        val dropLat = loc?.latitude ?: 0.0
+        val dropLon = loc?.longitude ?: 0.0
+
+        // Snap to nearest edge
+        val dropEdge = MapMatcherHelper.findClosestEdge(dropLat, dropLon)
+
+        // Finalize currentRide
+        val ride = currentRide?.copy(
+            endTs = endTs,
+            amount = this.amount,
+            dropLat = dropLat,
+            dropLon = dropLon,
+            dropEdge = dropEdge
+        )
+
+        if (ride != null) {
+            ioScope.launch {
+                // Insert into local SQLite
+                val db = AppDatabase.getDatabase(this@OverlayService)
+                val rowId = db.rideDao().insertRide(ride)
+                // Push to Firebase
+                FirebaseHelper.pushRide(ride)
+            }
+        }
+        
+        // Stop GPS tracking
+        trackRecorder.stopRecording()
+        
+        Toast.makeText(this, String.format("Ride stopped: %.2f zł", this.amount), Toast.LENGTH_SHORT).show()
+        currentRide = null
+        this.amount = 0f
     }
 
     private fun onKasaClick() {
-        Toast.makeText(this, "KASA clicked", Toast.LENGTH_SHORT).show()
+        if (!isRunning) {
+            Toast.makeText(this, "No active ride", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // Get current location for best edge analysis
+        val loc: Location? = LocationHelper.getLastKnownLocation(this)
+        val curLat = loc?.latitude ?: 0.0
+        val curLon = loc?.longitude ?: 0.0
+        
+        // Find best edge within 2km radius
+        StatEngine.findBestEdge(curLat, curLon, 2.0f) { advice ->
+            runOnUiThread {
+                if (advice != null) {
+                    Toast.makeText(
+                        this,
+                        "Best spot: edge ${advice.edgeId}\nETA ${String.format("%.1f", advice.etaMin)} min, est. ${String.format("%.1f", advice.eph)} zł/h",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(this, "No good spots found nearby", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    
+    private fun runOnUiThread(action: () -> Unit) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post(action)
     }
 
     inner class OverlayTouchListener : View.OnTouchListener {
