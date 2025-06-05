@@ -53,11 +53,11 @@ class MainActivity : ComponentActivity() {
     fun OverlayLauncherUI() {
         Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
             Button(onClick = {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this@MainActivity)) {
                     val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${packageName}"))
                     startActivity(intent)
                 } else {
-                    val intent = Intent(this, OverlayService::class.java)
+                    val intent = Intent(this@MainActivity, OverlayService::class.java)
                     startService(intent)
                 }
             }) {

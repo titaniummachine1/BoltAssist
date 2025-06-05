@@ -69,7 +69,7 @@ object StatEngine {
                 val score = ephEdge / eta
 
                 val advice = EdgeAdvice(edgeId, edgeStart, ephEdge, eta, score, radiusKm.toInt())
-                if (bestAdvice == null || advice.score > bestAdvice.score) {
+                if (bestAdvice == null || advice.score > bestAdvice!!.score) {
                     bestAdvice = advice
                 }
             }

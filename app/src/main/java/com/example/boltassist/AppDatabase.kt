@@ -7,7 +7,8 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [Ride::class, EdgeStat::class, SupplyDemand::class, SlotStat::class], 
-    version = 1
+    version = 1,
+    exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun rideDao(): RideDao

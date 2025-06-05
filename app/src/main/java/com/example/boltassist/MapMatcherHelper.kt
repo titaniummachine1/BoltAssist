@@ -2,6 +2,8 @@ package com.example.boltassist
 
 import android.content.Context
 import android.util.Log
+import kotlin.math.pow
+import kotlin.math.sqrt
 
 object MapMatcherHelper {
     private const val TAG = "MapMatcherHelper"
@@ -31,9 +33,9 @@ object MapMatcherHelper {
     ): Float {
         // TODO: Implement actual routing with edge_stats
         // For now, return simple distance-based ETA
-        val distanceKm = kotlin.math.sqrt(
-            kotlin.math.pow(toLat - fromLat, 2.0) + 
-            kotlin.math.pow(toLon - fromLon, 2.0)
+        val distanceKm = sqrt(
+            (toLat - fromLat).pow(2.0) + 
+            (toLon - fromLon).pow(2.0)
         ) * 111.0  // rough km conversion
         return (distanceKm / 15.0).toFloat() * 60  // assume 15 km/h, return minutes
     }
