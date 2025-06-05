@@ -4,8 +4,8 @@ BoltAssist is a simple Android application built with Jetpack Compose. The defau
 
 ## Prerequisites
 
-- **Android Studio**: version 2022.2.1 (Flamingo) or newer. The project uses the Android Gradle Plugin `7.4.0` and Kotlin `1.7.0`.
-- **Android SDK**: API level 33 installed. The module targets SDK 33 and requires a minimum SDK level of 30.
+- **Android Studio**: version 2024.1 (Koala) or newer. The project uses the Android Gradle Plugin `8.2.1` and Kotlin `1.9.22`.
+- **Android SDK**: API level 34 installed. The module targets SDK 34 and requires a minimum SDK level of 30.
 - Ensure `sdk.dir` is defined in a `local.properties` file or set the `ANDROID_HOME` environment variable so Gradle can locate your Android SDK.
 
 ## Building from the command line
