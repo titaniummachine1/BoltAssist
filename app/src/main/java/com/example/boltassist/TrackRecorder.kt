@@ -27,15 +27,20 @@ class TrackRecorder(private val context: Context) {
     )
 
     init {
-        scheduleNext()
+        try {
+            scheduleNext()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing TrackRecorder: ${e.message}")
+        }
     }
 
     @SuppressLint("MissingPermission")
     private val locationTask = object : Runnable {
         override fun run() {
             if (isRecording) {
-                val loc = LocationHelper.getLastKnownLocation(context)
-                if (loc != null && loc.speed > 0.5) {
+                try {
+                    val loc = LocationHelper.getLastKnownLocation(context)
+                    if (loc != null && loc.speed > 0.5) {
                     val trackPoint = TrackPoint(loc.time, loc.latitude, loc.longitude, loc.speed)
                     trackBuffer.add(trackPoint)
                     
@@ -56,6 +61,9 @@ class TrackRecorder(private val context: Context) {
                     if (trackBuffer.size >= 60) {
                         flushBuffer()
                     }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in location task: ${e.message}")
                 }
             }
             scheduleNext()

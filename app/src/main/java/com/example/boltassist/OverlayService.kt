@@ -36,9 +36,14 @@ class OverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         
-        // Initialize MapMatcher and TrackRecorder
-        MapMatcherHelper.init(this)
-        trackRecorder = TrackRecorder(this)
+        // Initialize MapMatcher and TrackRecorder safely
+        try {
+            MapMatcherHelper.init(this)
+            trackRecorder = TrackRecorder(this)
+        } catch (e: Exception) {
+            android.util.Log.e("OverlayService", "Error initializing components: ${e.message}")
+            // Continue without crashing
+        }
 
         overlayView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -145,8 +150,13 @@ class OverlayService : Service() {
         // Get current time
         val startTs = System.currentTimeMillis()
 
-        // Get current location
-        val loc: Location? = LocationHelper.getLastKnownLocation(this)
+        // Get current location (safely)
+        val loc: Location? = try {
+            LocationHelper.getLastKnownLocation(this)
+        } catch (e: SecurityException) {
+            android.util.Log.w("OverlayService", "Location permission not granted")
+            null
+        }
         val pickupLat = loc?.latitude ?: 0.0
         val pickupLon = loc?.longitude ?: 0.0
 
@@ -176,8 +186,13 @@ class OverlayService : Service() {
         // Get current time
         val endTs = System.currentTimeMillis()
 
-        // Get current location
-        val loc: Location? = LocationHelper.getLastKnownLocation(this)
+        // Get current location (safely)
+        val loc: Location? = try {
+            LocationHelper.getLastKnownLocation(this)
+        } catch (e: SecurityException) {
+            android.util.Log.w("OverlayService", "Location permission not granted")
+            null
+        }
         val dropLat = loc?.latitude ?: 0.0
         val dropLon = loc?.longitude ?: 0.0
 
@@ -217,8 +232,13 @@ class OverlayService : Service() {
             return
         }
         
-        // Get current location for best edge analysis
-        val loc: Location? = LocationHelper.getLastKnownLocation(this)
+        // Get current location for best edge analysis (safely)
+        val loc: Location? = try {
+            LocationHelper.getLastKnownLocation(this)
+        } catch (e: SecurityException) {
+            android.util.Log.w("OverlayService", "Location permission not granted")
+            null
+        }
         val curLat = loc?.latitude ?: 0.0
         val curLon = loc?.longitude ?: 0.0
         
