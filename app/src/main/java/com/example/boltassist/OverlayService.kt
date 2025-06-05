@@ -117,7 +117,7 @@ class OverlayService : Service() {
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else WindowManager.LayoutParams.TYPE_PHONE
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -212,7 +212,7 @@ class OverlayService : Service() {
             ioScope.launch {
                 // Insert into local SQLite
                 val db = AppDatabase.getDatabase(this@OverlayService)
-                val rowId = db.rideDao().insertRide(ride)
+                db.rideDao().insertRide(ride)
                 // Push to Firebase
                 FirebaseHelper.pushRide(ride)
             }

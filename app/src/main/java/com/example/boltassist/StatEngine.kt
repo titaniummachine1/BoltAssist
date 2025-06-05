@@ -34,6 +34,7 @@ object StatEngine {
     }
 
     // Called by OverlayService when KASA clicked
+    @Suppress("UNUSED_PARAMETER")
     fun findBestEdge(curLat: Double, curLon: Double, radiusKm: Float, onResult: (EdgeAdvice?) -> Unit) {
         ioScope.launch {
             val cal = Calendar.getInstance()
@@ -78,6 +79,7 @@ object StatEngine {
         }
     }
     
+    @Suppress("UNUSED_PARAMETER")
     private fun generateMockCandidateEdges(lat: Double, lon: Double, radiusKm: Float): List<Int> {
         // Generate some mock edges around the current location
         return (1..10).map { i ->

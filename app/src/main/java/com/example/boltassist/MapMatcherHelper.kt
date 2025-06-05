@@ -8,6 +8,7 @@ import kotlin.math.sqrt
 object MapMatcherHelper {
     private const val TAG = "MapMatcherHelper"
     
+    @Suppress("UNUSED_PARAMETER")
     fun init(context: Context) {
         // TODO: Initialize GraphHopper offline routing
         // For now, just log that initialization was called
@@ -26,6 +27,7 @@ object MapMatcherHelper {
         return Pair(53.7784 + (edgeId % 100) * 0.001, 20.4801 + (edgeId % 100) * 0.001)
     }
     
+    @Suppress("UNUSED_PARAMETER")
     fun computeEta(
         fromLat: Double, fromLon: Double,
         toLat: Double, toLon: Double,
