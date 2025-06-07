@@ -300,6 +300,7 @@ class FloatingWindowService : Service() {
         if (isRecording) {
             // Stop recording
             android.util.Log.d("BoltAssist", "FLOATING: Ending trip with earnings: ${earnings / 10} PLN (raw: $earnings)")
+            android.util.Log.d("BoltAssist", "FLOATING: Current system time: ${TripManager.getCurrentTimeString()}")
             
             // Validate trip before stopping
             if (earnings <= 0) {
@@ -330,6 +331,7 @@ class FloatingWindowService : Service() {
         } else {
             // Start recording
             android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation and default earnings 5 PLN")
+            android.util.Log.d("BoltAssist", "FLOATING: Current system time: ${TripManager.getCurrentTimeString()}")
             val startedTrip = TripManager.startTrip(currentLocation)
             android.util.Log.d("BoltAssist", "FLOATING: Trip started: $startedTrip")
             isRecording = true

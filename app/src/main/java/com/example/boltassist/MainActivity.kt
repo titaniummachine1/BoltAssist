@@ -36,6 +36,13 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import kotlinx.coroutines.launch
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
@@ -191,42 +198,12 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun GraphScreen(onStartFloatingWindow: () -> Unit) {
-    // Get data for debugging display
-    val trips = TripManager.tripsCache
-    val kalmanGrid = TripManager.getKalmanPredictionGrid()
-    val actualGrid = TripManager.getWeeklyGrid()
-    
     Column(Modifier.fillMaxSize().padding(8.dp)) {
         Box(Modifier.weight(1f)) { WeeklyEarningsGrid() }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onStartFloatingWindow, Modifier.weight(1f)) { Text("Begin") }
         }
-        // Debug buttons for testing
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Button(onClick = { TripManager.generateTestData() }, Modifier.weight(1f)) { 
-                Text("Test Data", fontSize = 12.sp) 
-            }
-            Button(onClick = { TripManager.generateKalmanTestData() }, Modifier.weight(1f)) { 
-                Text("Kalman Test", fontSize = 12.sp) 
-            }
-        }
-        // Show current trip count for debugging
-        Text(
-            text = "Trips: ${trips.size} | Grid shows Kalman predictions", 
-            fontSize = 10.sp, 
-            color = Color.Gray,
-            modifier = Modifier.padding(4.dp)
-        )
-        // Show grid stats for debugging
-        val gridSum = kalmanGrid.sumOf { row -> row.sum() }
-        val actualSum = actualGrid.sumOf { row -> row.sum() }
-        Text(
-            text = "Kalman total: ${gridSum.toInt()} PLN | Actual total: ${actualSum.toInt()} PLN", 
-            fontSize = 10.sp, 
-            color = Color.Blue,
-            modifier = Modifier.padding(4.dp)
-        )
     }
 }
 
@@ -254,12 +231,11 @@ fun WeeklyEarningsGrid() {
     val trips = TripManager.tripsCache
     val actualGrid = TripManager.getWeeklyGrid()
     val kalmanGrid = TripManager.getKalmanPredictionGrid()
-    val expectedGrid = TripManager.getExpectedGrid()
-    // Track system time to update highlight each minute
+    // Track system time to update highlight immediately and every 5 seconds for responsiveness
     var currentTime by remember { mutableStateOf(TripManager.getCurrentTime()) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(60_000L)
+            delay(5_000L) // Update every 5 seconds instead of 60 for quicker response to time changes
             currentTime = TripManager.getCurrentTime()
         }
     }
@@ -268,69 +244,163 @@ fun WeeklyEarningsGrid() {
 
     LaunchedEffect(trips.size) {
         android.util.Log.d("BoltAssist", "Grid recomposing with ${trips.size} trips")
+        // Force update current time when trips change (like when time traveling)
+        currentTime = TripManager.getCurrentTime()
+    }
+    
+    // Listen to lifecycle events to refresh time when app comes to foreground
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // Immediately update time when app resumes (handles time travel)
+                currentTime = TripManager.getCurrentTime()
+                android.util.Log.d("BoltAssist", "App resumed - refreshed current time to: $currentTime")
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     val polishDays = listOf("PN", "WT", "ŚR", "CZ", "PT", "SB", "ND")
+    
+    // Check orientation to decide grid layout
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    Column(
-        verticalArrangement = Arrangement.spacedBy(1.dp)
-    ) {
-        // Header row with hour numbers
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
+    if (isLandscape) {
+        // Landscape mode: Days vertical, Hours horizontal (current layout)
+        Column(
+            verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
-            // Empty cell for day labels column
-            Box(modifier = Modifier.size(25.dp))
-            
-            // Hour numbers 1-24
-            repeat(24) { hour ->
-                Box(
-                    modifier = Modifier.size(25.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "${hour + 1}",
-                        fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black
-                    )
-                }
-            }
-        }
-        
-        // Data rows with day labels
-        repeat(7) { day ->
+            // Header row with hour numbers
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                // Day label
-                Box(
-                    modifier = Modifier.size(25.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = polishDays[day],
-                        fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black
-                    )
-                }
+                // Empty cell for day labels column
+                Box(modifier = Modifier.size(25.dp))
                 
-                // Hour cells
+                // Hour numbers 1-24
                 repeat(24) { hour ->
-                    // Choose actual earnings for current hour, Kalman predictions for others
-                    val isCurrent = day == currentTime.first && hour == highlightIndex
-                    val value = if (isCurrent && actualGrid[day][hour] > 0) {
-                        actualGrid[day][hour] // Show actual data if available for current time
-                    } else {
-                        kalmanGrid[day][hour] // Use Kalman filter predictions otherwise
+                    Box(
+                        modifier = Modifier.size(25.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${hour + 1}",
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black
+                        )
                     }
-                    SimpleGridCell(
-                        earnings = value,
-                        isCurrentTime = isCurrent
-                    )
+                }
+            }
+            
+            // Data rows with day labels
+            repeat(7) { day ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    // Day label
+                    Box(
+                        modifier = Modifier.size(25.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = polishDays[day],
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black
+                        )
+                    }
+                    
+                    // Hour cells
+                    repeat(24) { hour ->
+                        // Choose actual earnings for current hour, Kalman predictions for others
+                        val isCurrent = day == currentTime.first && hour == highlightIndex
+                        val value = if (isCurrent && actualGrid[day][hour] > 0) {
+                            actualGrid[day][hour] // Show actual data if available for current time
+                        } else {
+                            kalmanGrid[day][hour] // Use Kalman filter predictions otherwise
+                        }
+                        SimpleGridCell(
+                            earnings = value,
+                            isCurrentTime = isCurrent
+                        )
+                    }
+                }
+            }
+        }
+    } else {
+        // Portrait mode: Days horizontal, Hours vertical (rotated layout)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            // Header column with day labels
+            Column(
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                // Empty cell for hour labels row
+                Box(modifier = Modifier.size(25.dp))
+                
+                // Day labels
+                repeat(7) { day ->
+                    Box(
+                        modifier = Modifier.size(25.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = polishDays[day],
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black
+                        )
+                    }
+                }
+            }
+            
+            // Scrollable grid content
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                // Data columns with hour labels
+                repeat(24) { hour ->
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(1.dp)
+                    ) {
+                        // Hour label
+                        Box(
+                            modifier = Modifier.size(25.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "${hour + 1}",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Black
+                            )
+                        }
+                        
+                        // Day cells for this hour
+                        repeat(7) { day ->
+                            // Choose actual earnings for current hour, Kalman predictions for others
+                            val isCurrent = day == currentTime.first && hour == highlightIndex
+                            val value = if (isCurrent && actualGrid[day][hour] > 0) {
+                                actualGrid[day][hour] // Show actual data if available for current time
+                            } else {
+                                kalmanGrid[day][hour] // Use Kalman filter predictions otherwise
+                            }
+                            SimpleGridCell(
+                                earnings = value,
+                                isCurrentTime = isCurrent
+                            )
+                        }
+                    }
                 }
             }
         }

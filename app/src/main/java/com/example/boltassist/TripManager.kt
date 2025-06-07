@@ -200,10 +200,37 @@ object TripManager {
     
     private fun saveTripToFile(trip: TripData) {
         android.util.Log.d("BoltAssist", "REAL TRIP: Adding trip to cache. Before: ${_tripsCache.size}")
+        android.util.Log.d("BoltAssist", "REAL TRIP: Current system time when saving: ${getCurrentTimeString()}")
         
         // Add to in-memory cache for UI (immediate real-time update) - SAME AS TEST DATA
         _tripsCache.add(trip)
         android.util.Log.d("BoltAssist", "REAL TRIP: Trip added to cache. After: ${_tripsCache.size}")
+        
+        // Validate time alignment for UI highlighting
+        try {
+            val startDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
+            val calendar = Calendar.getInstance()
+            calendar.time = startDate ?: Date()
+            
+            val tripDay = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.MONDAY -> 0
+                Calendar.TUESDAY -> 1  
+                Calendar.WEDNESDAY -> 2
+                Calendar.THURSDAY -> 3
+                Calendar.FRIDAY -> 4
+                Calendar.SATURDAY -> 5
+                Calendar.SUNDAY -> 6
+                else -> 0
+            }
+            val tripHour = calendar.get(Calendar.HOUR_OF_DAY)
+            val currentTime = getCurrentTime()
+            
+            android.util.Log.d("BoltAssist", "REAL TRIP: Trip time Day=$tripDay, Hour=$tripHour")
+            android.util.Log.d("BoltAssist", "REAL TRIP: Current UI time Day=${currentTime.first}, Hour=${currentTime.second}")
+            android.util.Log.d("BoltAssist", "REAL TRIP: Time alignment: ${if (tripDay == currentTime.first && tripHour == currentTime.second) "SYNCHRONIZED" else "DIFFERENT"}")
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "REAL TRIP: Failed to validate time alignment", e)
+        }
         
         // Force immediate UI update by logging all current trips
         android.util.Log.d("BoltAssist", "REAL TRIP: CURRENT CACHE CONTENTS:")
@@ -531,7 +558,14 @@ object TripManager {
             else -> 0
         }
         val hour = calendar.get(Calendar.HOUR_OF_DAY)
+        android.util.Log.d("BoltAssist", "Current time: Day=$day, Hour=$hour (${calendar.time})")
         return Pair(day, hour)
+    }
+    
+    // Get current time as formatted string (same format as trips use)
+    fun getCurrentTimeString(): String {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        return dateFormat.format(Date())
     }
     
     /**
