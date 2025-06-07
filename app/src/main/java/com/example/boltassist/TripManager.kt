@@ -225,6 +225,8 @@ object TripManager {
     private fun loadTripsFromFile() {
         val directory = storageDirectory ?: return
         val file = File(directory, "trips_database.json")
+        // Clear any cached trips so removing the file resets the grid
+        _tripsCache.clear()
         
         if (!file.exists()) {
             android.util.Log.d("BoltAssist", "No trips file found at: ${file.absolutePath}")
@@ -234,9 +236,10 @@ object TripManager {
         try {
             val json = file.readText()
             val tripsArray = gson.fromJson(json, Array<TripData>::class.java)
-            // Load into in-memory cache
-            _tripsCache.clear()
-            _tripsCache.addAll(tripsArray)
+            // Load into in-memory cache, filtering out any test trips (created with Test Street)
+            _tripsCache.addAll(
+                tripsArray.filterNot { it.startStreet == "Test Street" && it.endStreet == "Test Street" }
+            )
             android.util.Log.d("BoltAssist", "Loaded ${tripsCache.size} trips from: ${file.absolutePath}")
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to load trips from file", e)
@@ -431,6 +434,8 @@ object TripManager {
      */
     private fun loadTripsFromUri() {
         val uri = storageTreeUri ?: return
+        // Clear any cached trips so removing stored URI file resets the grid
+        _tripsCache.clear()
         val tree = DocumentFile.fromTreeUri(context, uri) ?: run {
             android.util.Log.e("BoltAssist", "Invalid document tree URI: $uri")
             return
@@ -444,9 +449,10 @@ object TripManager {
                 context.contentResolver.openInputStream(fileUri)?.use { inputStream ->
                     val json = inputStream.bufferedReader().use { it.readText() }
                     val tripsArray = gson.fromJson(json, Array<TripData>::class.java)
-                    // Load into in-memory cache
-                    _tripsCache.clear()
-                    _tripsCache.addAll(tripsArray)
+                    // Load into in-memory cache, filtering out test trips
+                    _tripsCache.addAll(
+                        tripsArray.filterNot { it.startStreet == "Test Street" && it.endStreet == "Test Street" }
+                    )
                     android.util.Log.d("BoltAssist", "Loaded ${tripsCache.size} trips from URI: $fileUri")
                 }
             } catch (e: Exception) {

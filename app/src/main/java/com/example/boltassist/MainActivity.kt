@@ -176,7 +176,9 @@ fun MainScreen(
             LegendItem(color = Color.Red, label = "Poor (<8)")
             LegendItem(color = Color.Yellow, label = "Decent (8-25)")
             LegendItem(color = Color.Green, label = "Good (25-45)")
-            LegendItem(color = Color.Green, label = "Legendary (45+)", isSpecial = true)
+            // 'Excellent' uses a custom blue
+            val excellentBlue = Color(0.2f, 0.6f, 1f)
+            LegendItem(color = excellentBlue, label = "Excellent (45+)")
         }
         Spacer(modifier = Modifier.height(8.dp))
         // Buttons
@@ -192,12 +194,6 @@ fun MainScreen(
                 }
             }) {
                 Text("Select Directory")
-            }
-            Button(onClick = {
-                TripManager.generateTestData()
-                android.util.Log.d("BoltAssist", "Test data generated, cache size: ${TripManager.tripsCache.size}")
-            }) {
-                Text("Test Data")
             }
             Button(onClick = onStartFloatingWindow, modifier = Modifier.weight(1f)) {
                 Text("Begin")
@@ -289,40 +285,34 @@ fun WeeklyEarningsGrid() {
 
 @Composable
 fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
-    // Gradient fill up to legendary threshold, then outline legend
-    val threshold = 45.0
-    if (earnings == 0.0) {
-        // No data
-        Box(
-            modifier = Modifier
-                .size(25.dp)
-                .background(Color.Black)
-                .border(if (isCurrentTime) 2.dp else 0.5.dp, if (isCurrentTime) Color.Blue else Color.Gray)
-        ) {}
-        return
+    // Color stops for gradient: 0=black, 8=red, 25=yellow, 45=green, 90=excellentBlue
+    val excellentBlue = Color(0.2f, 0.6f, 1f)
+    val stops = listOf(
+        0.0 to Color.Black,
+        8.0 to Color.Red,
+        25.0 to Color.Yellow,
+        45.0 to Color.Green,
+        90.0 to excellentBlue
+    )
+    // Compute fill color based on earnings by interpolating between nearest stops
+    val fillColor = if (earnings <= stops.first().first) {
+        stops.first().second
+    } else {
+        stops.zipWithNext().firstOrNull { (l, u) -> earnings <= u.first }?.let { (l, u) ->
+            val (lVal, lCol) = l
+            val (uVal, uCol) = u
+            val t = ((earnings - lVal) / (uVal - lVal)).toFloat().coerceIn(0f,1f)
+            lerp(lCol, uCol, t)
+        } ?: stops.last().second
     }
-    // Interpolate from red (0) to green (threshold)
-    val ratio = (earnings / threshold).coerceIn(0.0, 1.0).toFloat()
-    val fillColor = lerp(Color.Red, Color.Green, ratio)
-    val isLegendary = earnings >= threshold
-    // Draw box with interpolated background and outline for legend or current hour
+    // Border highlights current hour
+    val borderWidth = if (isCurrentTime) 2.dp else 0.5.dp
+    val borderColor = if (isCurrentTime) Color.Blue else Color.Gray
     Box(
         modifier = Modifier
             .size(25.dp)
             .background(fillColor)
-            // Outer blue border for current hour
-            .then(if (isCurrentTime) Modifier.border(2.dp, Color.Blue) else Modifier)
-            // Inner border: orange for legendary, gray default
-            .then(
-                when {
-                    isLegendary -> Modifier
-                        // pad inside blue border so orange is nested
-                        .padding(if (isCurrentTime) 2.dp else 0.dp)
-                        .border(2.dp, Color(1f, 0.65f, 0f))
-                    !isCurrentTime -> Modifier.border(0.5.dp, Color.Gray)
-                    else -> Modifier
-                }
-            )
+            .border(borderWidth, borderColor)
     ) {
         if (earnings > 0.0) {
             Text(
