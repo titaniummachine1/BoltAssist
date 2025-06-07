@@ -30,6 +30,7 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
     private var onFolderSelected: ((String) -> Unit)? = null
+    private var selectedStoragePath: String? = null
     
     private val directoryPickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -41,9 +42,14 @@ class MainActivity : ComponentActivity() {
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
             
-            // Convert URI to display path
-            val path = it.toString()
-            onFolderSelected?.invoke(path)
+            // Save the selected URI path
+            selectedStoragePath = it.toString()
+            
+            // Save to SharedPreferences for persistence
+            val prefs = getSharedPreferences("BoltAssist", MODE_PRIVATE)
+            prefs.edit().putString("storage_path", selectedStoragePath).apply()
+            
+            onFolderSelected?.invoke(selectedStoragePath!!)
         }
     }
     
@@ -57,6 +63,11 @@ class MainActivity : ComponentActivity() {
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Load saved storage path
+        val prefs = getSharedPreferences("BoltAssist", MODE_PRIVATE)
+        selectedStoragePath = prefs.getString("storage_path", null)
+        
         setContent {
             BoltAssistTheme {
                 Surface(
@@ -68,7 +79,8 @@ class MainActivity : ComponentActivity() {
                         onFolderSelect = { callback ->
                             onFolderSelected = callback
                             directoryPickerLauncher.launch(null)
-                        }
+                        },
+                        savedStoragePath = selectedStoragePath
                     )
                 }
             }
@@ -96,6 +108,12 @@ class MainActivity : ComponentActivity() {
     
     private fun startFloatingWindow() {
         val intent = Intent(this, FloatingWindowService::class.java)
+        
+        // Pass the selected storage path to the service
+        selectedStoragePath?.let {
+            intent.putExtra("storage_path", it)
+        }
+        
         startService(intent)
         finish() // Close main activity
     }
@@ -104,9 +122,12 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(
     onStartFloatingWindow: () -> Unit,
-    onFolderSelect: ((String) -> Unit) -> Unit
+    onFolderSelect: ((String) -> Unit) -> Unit,
+    savedStoragePath: String?
 ) {
-    var selectedFolder by remember { mutableStateOf("Not Selected") }
+    var selectedFolder by remember { 
+        mutableStateOf(if (savedStoragePath != null) "Selected" else "Not Selected") 
+    }
     val context = LocalContext.current
     val tripManager = remember { TripManager(context) }
     
@@ -175,19 +196,18 @@ fun MainScreen(
             }
             
             item {
-                // START FLOATING ASSISTANT - BIG GREEN BUTTON
+                // Start Floating Assistant - Simple Button
                 Button(
                     onClick = onStartFloatingWindow,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.Green
                     ),
-                    modifier = Modifier.size(280.dp, 100.dp)
+                    modifier = Modifier.height(50.dp)
                 ) {
                     Text(
-                        text = "🚀 START DRIVE ASSISTANT 🚀",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        text = "Begin Drive Assistant",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
@@ -221,9 +241,7 @@ fun MainScreen(
                 // Debug: Manual refresh button
                 Button(
                     onClick = { 
-                        val defaultDir = context.getExternalFilesDir(null)?.resolve("BoltAssist") 
-                            ?: context.filesDir.resolve("BoltAssist")
-                        tripManager.setStorageDirectory(defaultDir)
+                        refreshCounter++ // Trigger immediate refresh
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
                 ) {
@@ -242,13 +260,14 @@ fun WeeklyEarningsGrid(tripManager: TripManager) {
     
     // Immediate refresh when component loads and every 10 seconds for debugging
     LaunchedEffect(refreshCounter) {
+        tripManager.reloadFromFile() // Reload trips from file to pick up changes from FloatingWindowService
         gridData = tripManager.getWeeklyEarningsGrid()
     }
     
-    // Auto-refresh every 10 seconds for debugging + manual refresh capability
+    // Auto-refresh every 3 seconds for debugging + manual refresh capability
     LaunchedEffect(Unit) {
         while (true) {
-            delay(10000) // 10 seconds for debugging (was 60 seconds)
+            delay(3000) // 3 seconds for debugging (was 10 seconds)
             refreshCounter++
         }
     }
@@ -368,7 +387,8 @@ fun DefaultPreview() {
     BoltAssistTheme {
         MainScreen(
             onStartFloatingWindow = { },
-            onFolderSelect = { }
+            onFolderSelect = { },
+            savedStoragePath = null
         )
     }
 }

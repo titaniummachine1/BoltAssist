@@ -37,13 +37,25 @@ class FloatingWindowService : Service() {
         tripManager = TripManager(this)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         
-        // Set up default storage
-        val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist") 
-            ?: filesDir.resolve("BoltAssist")
-        tripManager.setStorageDirectory(defaultDir)
-        
         startLocationUpdates()
         createFloatingWindow()
+    }
+    
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Set up storage directory from intent or use default
+        val storagePathFromIntent = intent?.getStringExtra("storage_path")
+        val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist") 
+            ?: filesDir.resolve("BoltAssist")
+        
+        if (storagePathFromIntent != null) {
+            // Use custom storage path if provided
+            // For now, use default directory but log the custom path
+            android.util.Log.d("BoltAssist", "Custom storage path: $storagePathFromIntent")
+        }
+        
+        tripManager.setStorageDirectory(defaultDir)
+        
+        return START_STICKY
     }
     
     private fun createFloatingWindow() {
@@ -266,11 +278,15 @@ class FloatingWindowService : Service() {
     private fun toggleRecording() {
         if (isRecording) {
             // Stop recording
-            tripManager.stopTrip(currentLocation, earnings / 10) // Convert back to PLN
+            android.util.Log.d("BoltAssist", "Stopping trip with earnings: ${earnings / 10} PLN")
+            val completedTrip = tripManager.stopTrip(currentLocation, earnings / 10) // Convert back to PLN
+            android.util.Log.d("BoltAssist", "Trip saved: $completedTrip")
             isRecording = false
         } else {
             // Start recording
-            tripManager.startTrip(currentLocation)
+            android.util.Log.d("BoltAssist", "Starting new trip with location: $currentLocation")
+            val startedTrip = tripManager.startTrip(currentLocation)
+            android.util.Log.d("BoltAssist", "Trip started: $startedTrip")
             isRecording = true
         }
     }

@@ -37,7 +37,9 @@ class TripManager(private val context: Context) {
         storageDirectory = directory
         if (!directory.exists()) {
             directory.mkdirs()
+            android.util.Log.d("BoltAssist", "Created storage directory: ${directory.absolutePath}")
         }
+        android.util.Log.d("BoltAssist", "Storage directory set to: ${directory.absolutePath}")
         // Load existing trips into cache
         loadTripsFromFile()
     }
@@ -98,6 +100,8 @@ class TripManager(private val context: Context) {
         
         // Save immediately after each trip
         saveAllTripsToFile()
+        
+        android.util.Log.d("BoltAssist", "Trip saved to cache and file: $trip")
     }
     
     private fun saveAllTripsToFile() {
@@ -107,7 +111,9 @@ class TripManager(private val context: Context) {
         try {
             val json = gson.toJson(tripsCache.sortedByDescending { it.startTime })
             file.writeText(json)
+            android.util.Log.d("BoltAssist", "Saved ${tripsCache.size} trips to: ${file.absolutePath}")
         } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "Failed to save trips", e)
             e.printStackTrace()
         }
     }
@@ -116,18 +122,27 @@ class TripManager(private val context: Context) {
         val directory = storageDirectory ?: return
         val file = File(directory, "trips_database.json")
         
-        if (!file.exists()) return
+        if (!file.exists()) {
+            android.util.Log.d("BoltAssist", "No trips file found at: ${file.absolutePath}")
+            return
+        }
         
         try {
             val json = file.readText()
             val tripsArray = gson.fromJson(json, Array<TripData>::class.java)
             tripsCache.clear()
             tripsCache.addAll(tripsArray)
+            android.util.Log.d("BoltAssist", "Loaded ${tripsCache.size} trips from: ${file.absolutePath}")
         } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "Failed to load trips from file", e)
             e.printStackTrace()
             // If file is corrupted, start fresh
             tripsCache.clear()
         }
+    }
+    
+    fun reloadFromFile() {
+        loadTripsFromFile()
     }
     
     fun getAllTrips(): List<TripData> {
