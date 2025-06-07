@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
@@ -119,8 +120,7 @@ fun MainScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(8.dp)
     ) {
         // 7 rows (days) x 24 columns (hourly slots)
         WeeklyEarningsGrid(tripManager = tripManager)
@@ -128,79 +128,108 @@ fun MainScreen(
         Spacer(modifier = Modifier.height(8.dp))
         
         // Legend
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            LegendItem(color = Color.Black, label = "No Data")
-            LegendItem(color = Color.Red, label = "Bad")
-            LegendItem(color = Color.Yellow, label = "Decent")
-            LegendItem(color = Color.Green, label = "Good")
+        Column {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                LegendItem(color = Color.Black, label = "No Data")
+                LegendItem(color = Color(0.5f, 0f, 0f), label = "Very Poor (<8)")
+                LegendItem(color = Color.Red, label = "Poor (8-25)")
+                LegendItem(color = Color.Yellow, label = "Decent (25-45)")
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                LegendItem(color = Color.Green, label = "Good (45-80)")
+                LegendItem(
+                    color = Color(1f, 0.84f, 0f), 
+                    label = "LEGENDARY (80+)", 
+                    isSpecial = true
+                )
+            }
         }
         
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         
-        // Setup Controls
-        Column(
+        // Setup Controls - Moved to scrollable area
+        LazyColumn(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            // Folder Selection
-            Button(
-                onClick = { 
-                    onFolderSelect { folderPath ->
-                        selectedFolder = "Selected"
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (selectedFolder == "Not Selected") Color.Gray else Color.Blue
-                )
-            ) {
-                Text("Select Storage Folder: $selectedFolder")
+            item {
+                // Folder Selection
+                Button(
+                    onClick = { 
+                        onFolderSelect { folderPath ->
+                            selectedFolder = "Selected"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selectedFolder == "Not Selected") Color.Gray else Color.Blue
+                    )
+                ) {
+                    Text("Select Storage Folder: $selectedFolder")
+                }
             }
             
-            // Important: Overlay Permission Notice
-            Card(
-                modifier = Modifier.padding(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.Yellow.copy(alpha = 0.3f))
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+            item {
+                // START FLOATING ASSISTANT - BIG GREEN BUTTON
+                Button(
+                    onClick = onStartFloatingWindow,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.Green
+                    ),
+                    modifier = Modifier.size(280.dp, 100.dp)
                 ) {
                     Text(
-                        text = "⚠️ IMPORTANT",
-                        fontSize = 16.sp,
+                        text = "🚀 START DRIVE ASSISTANT 🚀",
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.Red
-                    )
-                    Text(
-                        text = "You must grant overlay permission for the floating window to work!",
-                        fontSize = 14.sp,
-                        color = Color.Black
+                        color = Color.White
                     )
                 }
             }
             
-            // Start Floating Assistant
-            Button(
-                onClick = onStartFloatingWindow,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Green
-                ),
-                modifier = Modifier.size(250.dp, 80.dp)
-            ) {
-                Text(
-                    text = "Grant Permission & Start\nDrive Assistant",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+            item {
+                // Important: Overlay Permission Notice
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Yellow.copy(alpha = 0.3f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "⚠️ Grant overlay permission when prompted",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Red
+                        )
+                        Text(
+                            text = "Creates draggable floating 'Help' button for trip recording",
+                            fontSize = 12.sp,
+                            color = Color.Black
+                        )
+                    }
+                }
             }
             
-            Text(
-                text = "This will create a draggable floating 'Help' button for recording trips while driving",
-                fontSize = 12.sp,
-                color = Color.Gray
-            )
+            item {
+                // Debug: Manual refresh button
+                Button(
+                    onClick = { 
+                        val defaultDir = context.getExternalFilesDir(null)?.resolve("BoltAssist") 
+                            ?: context.filesDir.resolve("BoltAssist")
+                        tripManager.setStorageDirectory(defaultDir)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
+                ) {
+                    Text("🔄 Refresh Data (Debug)")
+                }
+            }
         }
     }
 }
@@ -208,13 +237,19 @@ fun MainScreen(
 @Composable
 fun WeeklyEarningsGrid(tripManager: TripManager) {
     var gridData by remember { mutableStateOf(tripManager.getWeeklyEarningsGrid()) }
+    var refreshCounter by remember { mutableStateOf(0) }
     val currentTimeSlot = tripManager.getCurrentTimeSlot()
     
-    // Refresh data every minute
+    // Immediate refresh when component loads and every 10 seconds for debugging
+    LaunchedEffect(refreshCounter) {
+        gridData = tripManager.getWeeklyEarningsGrid()
+    }
+    
+    // Auto-refresh every 10 seconds for debugging + manual refresh capability
     LaunchedEffect(Unit) {
         while (true) {
-            delay(60000) // 1 minute
-            gridData = tripManager.getWeeklyEarningsGrid()
+            delay(10000) // 10 seconds for debugging (was 60 seconds)
+            refreshCounter++
         }
     }
     
@@ -242,50 +277,85 @@ fun WeeklyEarningsGrid(tripManager: TripManager) {
 fun GridCell(dayIndex: Int, hourIndex: Int, cellData: GridCellData, isCurrentTime: Boolean) {
     val backgroundColor = if (cellData.hasEnoughData()) {
         val hourlyEarnings = cellData.getHourlyEarnings()
-        val minEarnings = 10.0
-        val maxEarnings = 50.0
-        val ratio = ((hourlyEarnings - minEarnings) / (maxEarnings - minEarnings)).coerceIn(0.0, 1.0)
-        
-        if (ratio <= 0.5) {
-            // Red to Yellow
-            val localRatio = (ratio * 2).toFloat()
-            Color(1f, localRatio, 0f)
-        } else {
-            // Yellow to Green
-            val localRatio = ((ratio - 0.5) * 2).toFloat()
-            Color(1f - localRatio, 1f, 0f)
+        when {
+            hourlyEarnings >= 80.0 -> Color(1f, 0.84f, 0f) // LEGENDARY - Pure Gold
+            hourlyEarnings >= 45.0 -> {
+                // Good to Legendary gradient
+                val ratio = ((hourlyEarnings - 45.0) / 35.0).coerceIn(0.0, 1.0).toFloat()
+                Color(ratio, 1f, 0f)
+            }
+            hourlyEarnings >= 25.0 -> {
+                // Decent to Good
+                val ratio = ((hourlyEarnings - 25.0) / 20.0).coerceIn(0.0, 1.0).toFloat()
+                Color(1f - ratio, 1f, 0f)
+            }
+            hourlyEarnings >= 8.0 -> {
+                // Poor to Decent
+                val ratio = ((hourlyEarnings - 8.0) / 17.0).coerceIn(0.0, 1.0).toFloat()
+                Color(1f, ratio, 0f)
+            }
+            else -> Color(0.5f, 0f, 0f) // Very Poor - Dark Red
         }
     } else {
         Color.Black // Not enough data
     }
     
-    val borderColor = if (isCurrentTime) Color.Blue else Color.Gray
-    val borderWidth = if (isCurrentTime) 2.dp else 0.5.dp
+    // Special effects for legendary and current time
+    val isLegendary = cellData.isLegendary()
+    val borderColor = when {
+        isLegendary && isCurrentTime -> Color.Magenta // Both legendary and current
+        isLegendary -> Color(1f, 0.65f, 0f) // Orange border for legendary
+        isCurrentTime -> Color.Blue // Blue for current time
+        else -> Color.Gray
+    }
+    val borderWidth = when {
+        isLegendary && isCurrentTime -> 4.dp // Extra thick for legendary + current
+        isLegendary -> 3.dp // Thick for legendary
+        isCurrentTime -> 2.dp // Medium for current time
+        else -> 0.5.dp
+    }
+    
+    val cellSize = if (isLegendary) 28.dp else 25.dp // Slightly bigger for legendary
     
     Box(
         modifier = Modifier
-            .size(25.dp)
+            .size(cellSize)
             .background(backgroundColor)
             .border(borderWidth, borderColor)
-    )
+    ) {
+        // Add earnings text for legendary cells
+        if (isLegendary) {
+            Text(
+                text = "${cellData.getHourlyEarnings().toInt()}",
+                fontSize = 8.sp,
+                color = Color.Black,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+    }
 }
 
 @Composable
-fun LegendItem(color: Color, label: String) {
+fun LegendItem(color: Color, label: String, isSpecial: Boolean = false) {
     Row(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(16.dp)
+                .size(if (isSpecial) 20.dp else 16.dp)
                 .background(color)
-                .border(0.5.dp, Color.Gray)
+                .border(
+                    if (isSpecial) 2.dp else 0.5.dp, 
+                    if (isSpecial) Color(1f, 0.65f, 0f) else Color.Gray
+                )
         )
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
+            fontSize = if (isSpecial) 13.sp else 11.sp,
+            fontWeight = if (isSpecial) FontWeight.Bold else FontWeight.Medium,
+            color = if (isSpecial) Color(1f, 0.65f, 0f) else Color.Black
         )
     }
 }

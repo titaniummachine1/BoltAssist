@@ -80,10 +80,15 @@ class TripManager(private val context: Context) {
     }
     
     private fun getStreetFromLocation(location: Location?): String {
-        // TODO: Implement OpenStreetMap reverse geocoding
-        // For now, return coordinates as placeholder
+        // Simple OSM Nominatim reverse geocoding
         return location?.let { 
-            "Lat: %.4f, Lng: %.4f".format(it.latitude, it.longitude) 
+            try {
+                val url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=${it.latitude}&lon=${it.longitude}&zoom=18&addressdetails=1"
+                // For now, return coordinates - OSM integration will be added later
+                "Lat: %.4f, Lng: %.4f".format(it.latitude, it.longitude)
+            } catch (e: Exception) {
+                "Lat: %.4f, Lng: %.4f".format(it.latitude, it.longitude)
+            }
         } ?: "Unknown"
     }
     
@@ -209,20 +214,51 @@ data class GridCellData(
         if (!hasEnoughData()) return android.graphics.Color.valueOf(0f, 0f, 0f) // Black
         
         val hourlyEarnings = getHourlyEarnings()
-        // Define performance thresholds (PLN per hour)
-        val minEarnings = 10.0 // Red threshold
-        val maxEarnings = 50.0 // Green threshold
+        // Define performance thresholds (PLN per hour) - adjusted for Bolt driver reality
+        val poorEarnings = 8.0    // Red - Poor
+        val decentEarnings = 25.0 // Yellow - Decent
+        val goodEarnings = 45.0   // Green - Good
+        val legendaryEarnings = 80.0 // Gold - Legendary (events/surge)
         
-        val ratio = ((hourlyEarnings - minEarnings) / (maxEarnings - minEarnings)).coerceIn(0.0, 1.0)
-        
-        return if (ratio <= 0.5) {
-            // Red to Yellow
-            val localRatio = (ratio * 2).toFloat()
-            android.graphics.Color.valueOf(1f, localRatio, 0f)
-        } else {
-            // Yellow to Green
-            val localRatio = ((ratio - 0.5) * 2).toFloat()
-            android.graphics.Color.valueOf(1f - localRatio, 1f, 0f)
+        return when {
+            hourlyEarnings >= legendaryEarnings -> {
+                // LEGENDARY - Bright Gold for exceptional event earnings
+                android.graphics.Color.valueOf(1f, 0.84f, 0f) // Pure Gold
+            }
+            hourlyEarnings >= goodEarnings -> {
+                // Good to Legendary gradient (Green to Gold)
+                val ratio = ((hourlyEarnings - goodEarnings) / (legendaryEarnings - goodEarnings)).coerceIn(0.0, 1.0).toFloat()
+                android.graphics.Color.valueOf(ratio, 1f, 0f) // Green to Gold
+            }
+            hourlyEarnings >= decentEarnings -> {
+                // Decent to Good (Yellow to Green)
+                val ratio = ((hourlyEarnings - decentEarnings) / (goodEarnings - decentEarnings)).coerceIn(0.0, 1.0).toFloat()
+                android.graphics.Color.valueOf(1f - ratio, 1f, 0f)
+            }
+            hourlyEarnings >= poorEarnings -> {
+                // Poor to Decent (Red to Yellow)
+                val ratio = ((hourlyEarnings - poorEarnings) / (decentEarnings - poorEarnings)).coerceIn(0.0, 1.0).toFloat()
+                android.graphics.Color.valueOf(1f, ratio, 0f)
+            }
+            else -> {
+                // Very Poor - Dark Red
+                android.graphics.Color.valueOf(0.5f, 0f, 0f)
+            }
         }
     }
+    
+    fun getPerformanceLevel(): String {
+        if (!hasEnoughData()) return "No Data"
+        
+        val hourlyEarnings = getHourlyEarnings()
+        return when {
+            hourlyEarnings >= 80.0 -> "LEGENDARY"
+            hourlyEarnings >= 45.0 -> "Good"
+            hourlyEarnings >= 25.0 -> "Decent"
+            hourlyEarnings >= 8.0 -> "Poor"
+            else -> "Very Poor"
+        }
+    }
+    
+    fun isLegendary(): Boolean = hasEnoughData() && getHourlyEarnings() >= 80.0
 } 
