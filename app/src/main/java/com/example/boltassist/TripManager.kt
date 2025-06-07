@@ -12,6 +12,8 @@ import java.util.*
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import kotlinx.coroutines.*
+import java.net.HttpURLConnection
+import java.net.URL
 
 data class TripData(
     val id: String = UUID.randomUUID().toString(),
@@ -42,6 +44,8 @@ object TripManager {
     val tripsCache: SnapshotStateList<TripData> get() = _tripsCache
     // Optional storage URI for SAF-based directory
     private var storageTreeUri: Uri? = null
+    // Map of month-day (MM-dd) -> holiday name
+    private val holidayMap = mutableMapOf<String, String>()
     
     fun initialize(appContext: Context) {
         if (!::context.isInitialized) {
@@ -49,6 +53,11 @@ object TripManager {
             android.util.Log.d("BoltAssist", "TripManager singleton initialized")
             // Load existing trips from files
             tryLoadExistingTrips()
+            // Fetch public holidays (Poland) asynchronously
+            CoroutineScope(Dispatchers.IO).launch {
+                val year = Calendar.getInstance().get(Calendar.YEAR)
+                fetchHolidays(year)
+            }
         }
     }
     
@@ -461,6 +470,92 @@ object TripManager {
                 _tripsCache.clear()
             }
         }
+    }
+    
+    /**
+     * Fetch public holidays for a country via Nager.Date API.
+     */
+    private fun fetchHolidays(year: Int) {
+        try {
+            val url = URL("https://date.nager.at/api/v3/PublicHolidays/$year/PL")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            conn.requestMethod = "GET"
+            if (conn.responseCode == 200) {
+                val json = conn.inputStream.bufferedReader().use { it.readText() }
+                // Simple data class for parsing
+                data class Holiday(val date: String, val localName: String?, val name: String)
+                val holidays: Array<Holiday> = gson.fromJson(json, Array<Holiday>::class.java)
+                holidays.forEach { h ->
+                    // store by month-day (MM-dd)
+                    val md = h.date.substring(5)
+                    holidayMap[md] = h.localName ?: h.name
+                }
+                android.util.Log.d("BoltAssist", "Fetched ${holidayMap.size} public holidays for $year")
+            } else {
+                android.util.Log.w("BoltAssist", "Holiday API returned ${conn.responseCode}")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "Failed to fetch holidays", e)
+        }
+    }
+
+    /**
+     * Get the holiday tag for a given date, if any.
+     */
+    fun getDayTag(date: Date): String? {
+        val md = SimpleDateFormat("MM-dd", Locale.getDefault()).format(date)
+        return holidayMap[md]
+    }
+
+    /**
+     * Expected earnings grid, switching to holiday-based historical averages when a tag exists.
+     */
+    fun getExpectedGrid(): Array<DoubleArray> {
+        val calendar = Calendar.getInstance()
+        val currentWeek = calendar.get(Calendar.WEEK_OF_YEAR)
+        val today = calendar.time
+        val todayTag = getDayTag(today)
+        val earningsMap = mutableMapOf<Pair<Int, Int>, MutableList<Int>>()
+
+        _tripsCache.forEach { trip ->
+            try {
+                val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
+                if (date != null) {
+                    calendar.time = date
+                    val week = calendar.get(Calendar.WEEK_OF_YEAR)
+                    // Only past weeks
+                    if (week != currentWeek) {
+                        // If holiday mode, only include same tag
+                        if (todayTag != null) {
+                            val md = SimpleDateFormat("MM-dd", Locale.getDefault()).format(date)
+                            if (md != SimpleDateFormat("MM-dd", Locale.getDefault()).format(today)) return@forEach
+                        }
+                        val day = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                            Calendar.MONDAY -> 0
+                            Calendar.TUESDAY -> 1
+                            Calendar.WEDNESDAY -> 2
+                            Calendar.THURSDAY -> 3
+                            Calendar.FRIDAY -> 4
+                            Calendar.SATURDAY -> 5
+                            Calendar.SUNDAY -> 6
+                            else -> 0
+                        }
+                        val rawHour = calendar.get(Calendar.HOUR_OF_DAY)
+                        val hourIndex = (rawHour - 1 + 24) % 24
+                        earningsMap.getOrPut(day to hourIndex) { mutableListOf() }.add(trip.earningsPLN)
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+
+        val grid = Array(7) { DoubleArray(24) { 0.0 } }
+        earningsMap.forEach { (key, list) ->
+            val (day, hour) = key
+            grid[day][hour] = list.average()
+        }
+        return grid
     }
 }
 

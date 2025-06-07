@@ -207,7 +207,8 @@ fun MainScreen(
 fun WeeklyEarningsGrid() {
     // Get live grid data
     val trips = TripManager.tripsCache
-    val gridData = TripManager.getWeeklyGrid()
+    val actualGrid = TripManager.getWeeklyGrid()
+    val expectedGrid = TripManager.getExpectedGrid()
     // Track system time to update highlight each minute
     var currentTime by remember { mutableStateOf(TripManager.getCurrentTime()) }
     LaunchedEffect(Unit) {
@@ -273,9 +274,12 @@ fun WeeklyEarningsGrid() {
                 
                 // Hour cells
                 repeat(24) { hour ->
+                    // Choose actual earnings for current hour, expected for others
+                    val isCurrent = day == currentTime.first && hour == highlightIndex
+                    val value = if (isCurrent) actualGrid[day][hour] else expectedGrid[day][hour]
                     SimpleGridCell(
-                        earnings = gridData[day][hour],
-                        isCurrentTime = (day == currentTime.first && hour == highlightIndex)
+                        earnings = value,
+                        isCurrentTime = isCurrent
                     )
                 }
             }
