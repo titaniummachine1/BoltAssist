@@ -236,7 +236,7 @@ fun WeeklyEarningsGrid() {
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "${hour + 1}",
+                        text = "${hour}",
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.Black
@@ -281,11 +281,11 @@ fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
     // Simple color calculation
     val backgroundColor = when {
         earnings == 0.0 -> Color.Black // No data
-        earnings >= 80.0 -> Color(1f, 0.84f, 0f) // LEGENDARY - Gold
-        earnings >= 45.0 -> Color.Green // Good
-        earnings >= 25.0 -> Color.Yellow // Decent  
-        earnings >= 8.0 -> Color.Red // Poor
-        else -> Color(0.5f, 0f, 0f) // Very Poor - Dark Red
+        earnings >= 45.0 -> Color(1f, 0.65f, 0f) // Legendary (45+)
+        earnings >= 25.0 -> Color.Green // Good (25-45)
+        earnings >= 8.0 -> Color.Yellow // Decent (8-25)
+        earnings > 0.0 -> Color.Red // Poor (<8)
+        else -> Color.Black // fallback
     }
     
     // Consistent sizing and borders for all cells
