@@ -174,7 +174,7 @@ fun MainScreen(
             LegendItem(color = Color.Red, label = "Poor (<8)")
             LegendItem(color = Color.Yellow, label = "Decent (8-25)")
             LegendItem(color = Color.Green, label = "Good (25-45)")
-            LegendItem(color = Color(1f,0.65f,0f), label = "Legendary (45+)", isSpecial = true)
+            LegendItem(color = Color.Green, label = "Legendary (45+)", isSpecial = true)
         }
         Spacer(modifier = Modifier.height(8.dp))
         // Buttons
@@ -212,6 +212,9 @@ fun WeeklyEarningsGrid() {
     val gridData = TripManager.getWeeklyGrid()
     val currentTime = TripManager.getCurrentTime()
     
+    // Highlight the current hour in a 1-24 header (map 0 to 24)
+    val highlightIndex = (currentTime.second - 1 + 24) % 24
+
     LaunchedEffect(trips.size) {
         android.util.Log.d("BoltAssist", "Grid recomposing with ${trips.size} trips")
     }
@@ -236,7 +239,7 @@ fun WeeklyEarningsGrid() {
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "${hour}",
+                        text = "${hour + 1}",
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.Black
@@ -268,7 +271,7 @@ fun WeeklyEarningsGrid() {
                 repeat(24) { hour ->
                     SimpleGridCell(
                         earnings = gridData[day][hour],
-                        isCurrentTime = currentTime.first == day && currentTime.second == hour
+                        isCurrentTime = (day == currentTime.first && hour == highlightIndex)
                     )
                 }
             }
@@ -278,19 +281,25 @@ fun WeeklyEarningsGrid() {
 
 @Composable
 fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
-    // Simple color calculation
+    // Categorize cell: legendary shows green with orange border
+    val isLegendary = earnings >= 45.0
     val backgroundColor = when {
         earnings == 0.0 -> Color.Black // No data
-        earnings >= 45.0 -> Color(1f, 0.65f, 0f) // Legendary (45+)
-        earnings >= 25.0 -> Color.Green // Good (25-45)
-        earnings >= 8.0 -> Color.Yellow // Decent (8-25)
-        earnings > 0.0 -> Color.Red // Poor (<8)
-        else -> Color.Black // fallback
+        isLegendary -> Color.Green
+        earnings >= 25.0 -> Color.Yellow // Decent
+        earnings >= 8.0 -> Color.Red // Poor
+        else -> Color(0.5f, 0f, 0f) // Very poor
     }
-    
-    // Consistent sizing and borders for all cells
-    val borderColor = if (isCurrentTime) Color.Blue else Color.Gray
-    val borderWidth = if (isCurrentTime) 2.dp else 0.5.dp
+    // Border: orange for legendary, blue for current hour, gray otherwise
+    val borderColor = when {
+        isCurrentTime -> Color.Blue
+        isLegendary -> Color(1f, 0.65f, 0f)
+        else -> Color.Gray
+    }
+    val borderWidth = when {
+        isCurrentTime || isLegendary -> 2.dp
+        else -> 0.5.dp
+    }
     val cellSize = 25.dp // Same size for all cells
     
     Box(

@@ -26,7 +26,8 @@ class FloatingWindowService : Service() {
     private var floatingView: View? = null
     private var expandedView: View? = null
     private var isExpanded = false
-    private var earnings = 0
+    // Earnings stored in tenths of PLN; default 5.0 PLN = 50
+    private var earnings = 50
     private var isRecording = false
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var currentLocation: Location? = null
@@ -223,23 +224,13 @@ class FloatingWindowService : Service() {
             } else {
                 WindowManager.LayoutParams.TYPE_PHONE
             },
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.CENTER
         }
         
         expandedView = layout
-        
-        // Add touch outside listener to close the expanded view
-        layout.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                toggleExpanded()
-                true
-            } else {
-                false
-            }
-        }
         
         windowManager.addView(expandedView, params)
     }
@@ -304,12 +295,15 @@ class FloatingWindowService : Service() {
             android.util.Log.d("BoltAssist", "FLOATING: Cache size after trip: ${TripManager.tripsCache.size}")
             isRecording = false
             // Reset earnings for next trip
-            earnings = 0
+            earnings = 50 // back to default 5 PLN for next trip
             // Update display if expanded view is open
             moneyDisplay?.text = "${earnings / 10.0} PLN"
         } else {
             // Start recording
-            android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation")
+            // Reset earnings to default 5 PLN
+            earnings = 50
+            moneyDisplay?.text = "${earnings / 10.0} PLN"
+            android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation and default earnings 5 PLN")
             val startedTrip = TripManager.startTrip(currentLocation)
             android.util.Log.d("BoltAssist", "FLOATING: Trip started: $startedTrip")
             isRecording = true
