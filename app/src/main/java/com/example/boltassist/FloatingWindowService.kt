@@ -279,9 +279,28 @@ class FloatingWindowService : Service() {
     private fun toggleRecording() {
         if (isRecording) {
             // Stop recording
-            android.util.Log.d("BoltAssist", "FLOATING: Stopping trip with earnings: ${earnings / 10} PLN (raw: $earnings)")
+            android.util.Log.d("BoltAssist", "FLOATING: Ending trip with earnings: ${earnings / 10} PLN (raw: $earnings)")
+            
+            // Validate trip before stopping
+            if (earnings <= 0) {
+                android.util.Log.w("BoltAssist", "FLOATING: WARNING - Trip has 0 earnings!")
+            }
+            
             val completedTrip = TripManager.stopTrip(currentLocation, earnings / 10) // Convert back to PLN
             android.util.Log.d("BoltAssist", "FLOATING: Trip completed: $completedTrip")
+            
+            // Validate completed trip
+            completedTrip?.let { trip ->
+                android.util.Log.d("BoltAssist", "FLOATING: TRIP VALIDATION:")
+                android.util.Log.d("BoltAssist", "  Has endTime: ${trip.endTime != null}")
+                android.util.Log.d("BoltAssist", "  Duration > 0: ${trip.durationMinutes > 0}")
+                android.util.Log.d("BoltAssist", "  Earnings > 0: ${trip.earningsPLN > 0}")
+                
+                if (trip.endTime == null || trip.durationMinutes <= 0) {
+                    android.util.Log.e("BoltAssist", "FLOATING: INVALID TRIP - will be skipped in grid!")
+                }
+            }
+            
             android.util.Log.d("BoltAssist", "FLOATING: Cache size after trip: ${TripManager.tripsCache.size}")
             isRecording = false
             // Reset earnings for next trip

@@ -99,7 +99,9 @@ object TripManager {
     
     fun startTrip(location: Location?): TripData {
         tripStartTime = System.currentTimeMillis()
-        val startTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        // Use EXACT same date format as test data
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val startTime = dateFormat.format(Date())
         
         currentTrip = TripData(
             startTime = startTime,
@@ -109,13 +111,17 @@ object TripManager {
             startStreet = getStreetFromLocation(location) // TODO: Implement OSM reverse geocoding
         )
         
+        android.util.Log.d("BoltAssist", "REAL TRIP STARTED: '${currentTrip!!.startTime}' at time ${tripStartTime}")
+        
         return currentTrip!!
     }
     
     fun stopTrip(location: Location?, earnings: Int): TripData? {
         val trip = currentTrip ?: return null
         
-        val endTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        // Use EXACT same date format as test data
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val endTime = dateFormat.format(Date())
         val durationMinutes = ((System.currentTimeMillis() - tripStartTime) / 60000).toInt()
         
         val completedTrip = trip.copy(
@@ -129,11 +135,20 @@ object TripManager {
         )
         
         android.util.Log.d("BoltAssist", "REAL TRIP CREATED:")
-        android.util.Log.d("BoltAssist", "  Start: ${completedTrip.startTime}")
-        android.util.Log.d("BoltAssist", "  End: ${completedTrip.endTime}")
+        android.util.Log.d("BoltAssist", "  Start: '${completedTrip.startTime}'")
+        android.util.Log.d("BoltAssist", "  End: '${completedTrip.endTime}'")
         android.util.Log.d("BoltAssist", "  Duration: ${completedTrip.durationMinutes} minutes")
         android.util.Log.d("BoltAssist", "  Earnings: ${completedTrip.earningsPLN} PLN")
         android.util.Log.d("BoltAssist", "  ID: ${completedTrip.id}")
+        
+        // Test date parsing immediately
+        try {
+            val parsedStart = dateFormat.parse(completedTrip.startTime)
+            val parsedEnd = completedTrip.endTime?.let { dateFormat.parse(it) }
+            android.util.Log.d("BoltAssist", "REAL TRIP: Date parsing SUCCESS - Start: $parsedStart, End: $parsedEnd")
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "REAL TRIP: Date parsing FAILED!", e)
+        }
         
         saveTripToFile(completedTrip)
         currentTrip = null
@@ -155,10 +170,33 @@ object TripManager {
     }
     
     private fun saveTripToFile(trip: TripData) {
-        android.util.Log.d("BoltAssist", "Adding trip to cache. Before: ${_tripsCache.size}")
-        // Add to in-memory cache for UI (immediate real-time update)
+        android.util.Log.d("BoltAssist", "REAL TRIP: Adding trip to cache. Before: ${_tripsCache.size}")
+        
+        // Add to in-memory cache for UI (immediate real-time update) - SAME AS TEST DATA
         _tripsCache.add(trip)
-        android.util.Log.d("BoltAssist", "Trip added to cache. After: ${_tripsCache.size}")
+        android.util.Log.d("BoltAssist", "REAL TRIP: Trip added to cache. After: ${_tripsCache.size}")
+        
+        // Force immediate UI update by logging all current trips
+        android.util.Log.d("BoltAssist", "REAL TRIP: CURRENT CACHE CONTENTS:")
+        _tripsCache.forEachIndexed { index, cachedTrip ->
+            android.util.Log.d("BoltAssist", "  [$index] ID=${cachedTrip.id}, Start=${cachedTrip.startTime}, Earnings=${cachedTrip.earningsPLN}")
+        }
+        
+        // Log grid calculation immediately after adding
+        android.util.Log.d("BoltAssist", "REAL TRIP: Testing grid calculation with new trip...")
+        val testGrid = getWeeklyGrid()
+        var foundData = false
+        for (day in 0..6) {
+            for (hour in 0..23) {
+                if (testGrid[day][hour] > 0) {
+                    android.util.Log.d("BoltAssist", "REAL TRIP: Grid[$day][$hour] = ${testGrid[day][hour]} PLN")
+                    foundData = true
+                }
+            }
+        }
+        if (!foundData) {
+            android.util.Log.e("BoltAssist", "REAL TRIP: NO DATA FOUND IN GRID AFTER ADDING TRIP!")
+        }
         
         // Save immediately to files for persistence (real-time sync)
         if (storageTreeUri != null) {
@@ -166,7 +204,7 @@ object TripManager {
         } else if (storageDirectory != null) {
             saveAllTripsToFile()
         }
-        android.util.Log.d("BoltAssist", "Trip saved to cache and files: $trip")
+        android.util.Log.d("BoltAssist", "REAL TRIP: Trip saved to cache and files: $trip")
     }
     
     private fun saveAllTripsToFile() {
@@ -223,7 +261,7 @@ object TripManager {
     }
     
     fun generateTestData() {
-        android.util.Log.d("BoltAssist", "Generating test data...")
+        android.util.Log.d("BoltAssist", "TEST DATA: Generating test data...")
         
         // Generate some test trips for today at different hours
         val testTrips = listOf(
@@ -234,8 +272,21 @@ object TripManager {
         )
         
         testTrips.forEach { trip ->
-            _tripsCache.add(trip)
-            android.util.Log.d("BoltAssist", "Added test trip: $trip")
+            android.util.Log.d("BoltAssist", "TEST DATA: Adding trip to cache. Before: ${_tripsCache.size}")
+            _tripsCache.add(trip) // SAME METHOD AS REAL TRIPS
+            android.util.Log.d("BoltAssist", "TEST DATA: Trip added to cache. After: ${_tripsCache.size}")
+            android.util.Log.d("BoltAssist", "TEST DATA: Added trip: $trip")
+        }
+        
+        // Log grid calculation after test data
+        android.util.Log.d("BoltAssist", "TEST DATA: Testing grid calculation with test trips...")
+        val testGrid = getWeeklyGrid()
+        for (day in 0..6) {
+            for (hour in 0..23) {
+                if (testGrid[day][hour] > 0) {
+                    android.util.Log.d("BoltAssist", "TEST DATA: Grid[$day][$hour] = ${testGrid[day][hour]} PLN")
+                }
+            }
         }
         
         // Save all test data to files
@@ -244,7 +295,7 @@ object TripManager {
         } else if (storageDirectory != null) {
             saveAllTripsToFile()
         }
-        android.util.Log.d("BoltAssist", "Test data generated and saved!")
+        android.util.Log.d("BoltAssist", "TEST DATA: Test data generated and saved!")
     }
     
     private fun createTestTrip(hour: Int, durationMinutes: Int, earningsPLN: Int): TripData {
@@ -296,7 +347,7 @@ object TripManager {
         trips.forEach { trip ->
             android.util.Log.d("BoltAssist", "Processing trip for grid: ID=${trip.id}, Start=${trip.startTime}, End=${trip.endTime}, Earnings=${trip.earningsPLN}")
             
-            if (trip.endTime != null && trip.durationMinutes > 0) {
+            if (trip.endTime != null && trip.earningsPLN > 0) {
                 try {
                     val startDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
                     val calendar = Calendar.getInstance()
@@ -323,7 +374,7 @@ object TripManager {
                     android.util.Log.e("BoltAssist", "ERROR processing trip: $trip", e)
                 }
             } else {
-                android.util.Log.w("BoltAssist", "SKIPPING trip: endTime=${trip.endTime}, duration=${trip.durationMinutes}")
+                android.util.Log.w("BoltAssist", "SKIPPING trip: endTime=${trip.endTime}, earnings=${trip.earningsPLN}")
             }
         }
         
