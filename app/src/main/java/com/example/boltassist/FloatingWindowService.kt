@@ -329,9 +329,6 @@ class FloatingWindowService : Service() {
             moneyDisplay?.text = "${earnings / 10.0} PLN"
         } else {
             // Start recording
-            // Reset earnings to default 5 PLN
-            earnings = 50
-            moneyDisplay?.text = "${earnings / 10.0} PLN"
             android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation and default earnings 5 PLN")
             val startedTrip = TripManager.startTrip(currentLocation)
             android.util.Log.d("BoltAssist", "FLOATING: Trip started: $startedTrip")
