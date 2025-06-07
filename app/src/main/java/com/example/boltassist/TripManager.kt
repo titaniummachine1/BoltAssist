@@ -363,13 +363,14 @@ object TripManager {
                         Calendar.SUNDAY -> 6
                         else -> 0
                     }
-                    val hour = calendar.get(Calendar.HOUR_OF_DAY)
+                    // Determine raw hour (0-23) and map to 0-based index (header labels 1-24)
+                    val rawHour = calendar.get(Calendar.HOUR_OF_DAY)
+                    val hourIndex = (rawHour - 1 + 24) % 24
+                    // Add total earnings to grid at mapped index
+                    grid[day][hourIndex] += trip.earningsPLN.toDouble()
                     
-                    // Add total earnings to grid (sum all trips in same hour)
-                    grid[day][hour] += trip.earningsPLN.toDouble()
-                    
-                    android.util.Log.d("BoltAssist", "SUCCESS: Trip ${trip.id} -> Day=$day, Hour=$hour, Earnings=${trip.earningsPLN} PLN")
-                    android.util.Log.d("BoltAssist", "Grid[$day][$hour] now = ${grid[day][hour]} PLN total")
+                    android.util.Log.d("BoltAssist", "SUCCESS: Trip ${trip.id} -> Day=$day, RawHour=$rawHour, Index=$hourIndex, Earnings=${trip.earningsPLN} PLN")
+                    android.util.Log.d("BoltAssist", "Grid[$day][$hourIndex] now = ${grid[day][hourIndex]} PLN total")
                 } catch (e: Exception) {
                     android.util.Log.e("BoltAssist", "ERROR processing trip: $trip", e)
                 }

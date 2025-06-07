@@ -32,6 +32,8 @@ import java.io.File
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.lerp
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private var onFolderSelected: ((String) -> Unit)? = null
@@ -210,9 +212,15 @@ fun WeeklyEarningsGrid() {
     // Get live grid data
     val trips = TripManager.tripsCache
     val gridData = TripManager.getWeeklyGrid()
-    val currentTime = TripManager.getCurrentTime()
-    
-    // Highlight the current hour in a 1-24 header (map 0 to 24)
+    // Track system time to update highlight each minute
+    var currentTime by remember { mutableStateOf(TripManager.getCurrentTime()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000L)
+            currentTime = TripManager.getCurrentTime()
+        }
+    }
+    // Compute header index for highlighting (map hour 0-23 to index 0-23 for 1-24 labels)
     val highlightIndex = (currentTime.second - 1 + 24) % 24
 
     LaunchedEffect(trips.size) {
@@ -281,34 +289,36 @@ fun WeeklyEarningsGrid() {
 
 @Composable
 fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
-    // Categorize cell: legendary shows green with orange border
-    val isLegendary = earnings >= 45.0
-    val backgroundColor = when {
-        earnings == 0.0 -> Color.Black // No data
-        isLegendary -> Color.Green
-        earnings >= 25.0 -> Color.Yellow // Decent
-        earnings >= 8.0 -> Color.Red // Poor
-        else -> Color(0.5f, 0f, 0f) // Very poor
+    // Gradient fill up to legendary threshold, then outline legend
+    val threshold = 45.0
+    if (earnings == 0.0) {
+        // No data
+        Box(
+            modifier = Modifier
+                .size(25.dp)
+                .background(Color.Black)
+                .border(if (isCurrentTime) 2.dp else 0.5.dp, if (isCurrentTime) Color.Blue else Color.Gray)
+        ) {}
+        return
     }
-    // Border: orange for legendary, blue for current hour, gray otherwise
-    val borderColor = when {
-        isCurrentTime -> Color.Blue
-        isLegendary -> Color(1f, 0.65f, 0f)
-        else -> Color.Gray
-    }
-    val borderWidth = when {
-        isCurrentTime || isLegendary -> 2.dp
-        else -> 0.5.dp
-    }
-    val cellSize = 25.dp // Same size for all cells
-    
+    // Interpolate from red (0) to green (threshold)
+    val ratio = (earnings / threshold).coerceIn(0.0, 1.0).toFloat()
+    val fillColor = lerp(Color.Red, Color.Green, ratio)
+    val isLegendary = earnings >= threshold
+    // Draw box with interpolated background and outline for legend or current hour
     Box(
         modifier = Modifier
-            .size(cellSize)
-            .background(backgroundColor)
-            .border(borderWidth, borderColor)
+            .size(25.dp)
+            .background(fillColor)
+            .border(
+                width = if (isLegendary || isCurrentTime) 2.dp else 0.5.dp,
+                color = when {
+                    isCurrentTime -> Color.Blue
+                    isLegendary -> Color(1f, 0.65f, 0f)
+                    else -> Color.Gray
+                }
+            )
     ) {
-        // Show earnings text for any cell with data
         if (earnings > 0.0) {
             Text(
                 text = "${earnings.toInt()}",

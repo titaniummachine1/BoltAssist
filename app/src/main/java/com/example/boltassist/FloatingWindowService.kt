@@ -209,12 +209,21 @@ class FloatingWindowService : Service() {
             }
         }
         
-        moneyLayout.addView(minusButton)
-        moneyLayout.addView(plusButton)
+        // Make minus and plus share space equally
+        val buttonParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        moneyLayout.addView(minusButton, buttonParams)
+        moneyLayout.addView(plusButton, buttonParams)
         
         layout.addView(startStopButton)
         layout.addView(moneyDisplay!!)
-        layout.addView(moneyLayout)
+        // Ensure money controls span full width
+        layout.addView(
+            moneyLayout,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
         
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -224,13 +233,33 @@ class FloatingWindowService : Service() {
             } else {
                 WindowManager.LayoutParams.TYPE_PHONE
             },
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.CENTER
         }
         
         expandedView = layout
+        // Close when clicking outside
+        layout.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                toggleExpanded()
+                true
+            } else false
+        }
+        // Exit button to stop the floating service
+        val exitButton = Button(this).apply {
+            text = "Exit"
+            textSize = 16f
+            setOnClickListener { stopSelf() }
+        }
+        layout.addView(
+            exitButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = 16 }
+        )
         
         windowManager.addView(expandedView, params)
     }
