@@ -19,7 +19,7 @@ data class TripData(
     val id: String = UUID.randomUUID().toString(),
     val startTime: String,
     val endTime: String? = null,
-    val durationMinutes: Int = 0,
+image.png    val durationMinutes: Int = 0,
     val startStreet: String = "Unknown",
     val endStreet: String = "Unknown",
     val earningsPLN: Int = 0,
