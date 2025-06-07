@@ -1,186 +1,209 @@
 package com.example.boltassist
 
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
-import android.util.Log
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.boltassist.ui.theme.BoltAssistTheme
 
-
 class MainActivity : ComponentActivity() {
-    private var hasLocationPermission by mutableStateOf(false)
-    private var hasOverlayPermission by mutableStateOf(false)
-    
-    private val requestLocationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        hasLocationPermission = isGranted
-        if (!isGranted) {
-            Toast.makeText(this, "Location permission is required for GPS tracking", Toast.LENGTH_LONG).show()
-        } else {
-            Log.d("MainActivity", "Location permission granted")
-        }
-    }
-    
-    private val requestOverlayPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { _ ->
-        hasOverlayPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(this)
-        } else {
-            true
-        }
-        if (!hasOverlayPermission) {
-            Toast.makeText(this, "Overlay permission is required for HUD display", Toast.LENGTH_LONG).show()
-        } else {
-            Log.d("MainActivity", "Overlay permission granted")
-        }
-    }
-    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Check initial permissions
-        checkPermissions()
-        
         setContent {
             BoltAssistTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    PermissionAwareUI()
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    WeekGrid()
                 }
             }
         }
     }
-    
-    override fun onResume() {
-        super.onResume()
-        // Re-check permissions when user returns to app (e.g., from settings)
-        checkPermissions()
-    }
-    
-    private fun checkPermissions() {
-        // Check location permission
-        hasLocationPermission = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        
-        // Check overlay permission
-        hasOverlayPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(this)
-        } else {
-            true
-        }
-        
-        Log.d("MainActivity", "Location permission: $hasLocationPermission, Overlay permission: $hasOverlayPermission")
-    }
+}
 
-    @Composable
-    fun PermissionAwareUI() {
-        Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-            when {
-                !hasLocationPermission -> {
-                    PermissionRequestUI(
-                        title = "Location Permission Required",
-                        description = "BoltAssist needs location access to track rides and provide navigation guidance.",
-                        buttonText = "Grant Location Permission"
-                    ) {
-                        requestLocationPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
-                    }
-                }
-                !hasOverlayPermission -> {
-                    PermissionRequestUI(
-                        title = "Overlay Permission Required", 
-                        description = "BoltAssist needs overlay permission to display the floating HUD while using other apps.",
-                        buttonText = "Grant Overlay Permission"
-                    ) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${packageName}"))
-                            requestOverlayPermissionLauncher.launch(intent)
-                        }
-                    }
-                }
-                else -> {
-                    // Both permissions granted - show main UI
-                    MainAppUI()
-                }
-            }
-        }
-    }
+@Composable
+fun WeekGrid() {
+    var isRecording by remember { mutableStateOf(false) }
+    var currentEarnings by remember { mutableStateOf(0) }
+    var selectedFolder by remember { mutableStateOf("Not Selected") }
     
-    @Composable
-    fun PermissionRequestUI(
-        title: String,
-        description: String, 
-        buttonText: String,
-        onButtonClick: () -> Unit
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // 7 rows (days) x 24 columns (hourly slots)
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(16.dp)
+            verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(bottom = 24.dp)
-            )
-            Button(onClick = onButtonClick) {
-                Text(buttonText)
+            repeat(7) { dayIndex ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    repeat(24) { hourIndex ->
+                        GridCell(
+                            dayIndex = dayIndex,
+                            hourIndex = hourIndex
+                        )
+                    }
+                }
             }
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        // Legend
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            LegendItem(color = Color.Black, label = "No Data")
+            LegendItem(color = Color.Red, label = "Bad")
+            LegendItem(color = Color.Yellow, label = "Decent")
+            LegendItem(color = Color.Green, label = "Good")
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // Trip Recording Controls
+        TripControls(
+            isRecording = isRecording,
+            currentEarnings = currentEarnings,
+            selectedFolder = selectedFolder,
+            onRecordingToggle = { isRecording = !isRecording },
+            onEarningsChange = { change -> 
+                currentEarnings = (currentEarnings + change).coerceAtLeast(0)
+            },
+            onFolderSelect = { selectedFolder = "Folder Selected" }
+        )
+    }
+}
+
+@Composable
+fun GridCell(dayIndex: Int, hourIndex: Int) {
+    // All cells start as "No Data" (black) - will be filled naturally with trip data
+    Box(
+        modifier = Modifier
+            .size(25.dp)
+            .background(Color.Black)
+            .border(0.5.dp, Color.Gray)
+    )
+}
+
+@Composable
+fun LegendItem(color: Color, label: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(16.dp)
+                .background(color)
+                .border(0.5.dp, Color.Gray)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+fun TripControls(
+    isRecording: Boolean,
+    currentEarnings: Int,
+    selectedFolder: String,
+    onRecordingToggle: () -> Unit,
+    onEarningsChange: (Int) -> Unit,
+    onFolderSelect: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Folder Selection
+        Button(
+            onClick = onFolderSelect,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (selectedFolder == "Not Selected") Color.Gray else Color.Blue
+            )
+        ) {
+            Text("Select Storage Folder: $selectedFolder")
+        }
+        
+        // Recording Status
+        Text(
+            text = if (isRecording) "Recording Trip..." else "Ready to Record",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (isRecording) Color.Red else Color.Gray
+        )
+        
+        // Earnings Control
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            IconButton(
+                onClick = { onEarningsChange(-5) },
+                enabled = currentEarnings > 0
+            ) {
+                Text("-5", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+            
+            Text(
+                text = "${currentEarnings} PLN",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(80.dp)
+            )
+            
+            IconButton(onClick = { onEarningsChange(5) }) {
+                Text("+5", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        
+        // Start/Stop Button
+        Button(
+            onClick = onRecordingToggle,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isRecording) Color.Red else Color.Green
+            ),
+            modifier = Modifier.size(120.dp, 48.dp)
+        ) {
+            Icon(
+                imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.PlayArrow,
+                contentDescription = null
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(if (isRecording) "STOP" else "START")
         }
     }
-    
-    @Composable
-    fun MainAppUI() {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Text(
-                text = "BoltAssist Ready",
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-            Text(
-                text = "All permissions granted. You can now launch the HUD overlay.",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(bottom = 24.dp)
-            )
-            Button(onClick = {
-                try {
-                    Log.d("MainActivity", "Starting OverlayService")
-                    val intent = Intent(this@MainActivity, OverlayService::class.java)
-                    startService(intent)
-                    Toast.makeText(this@MainActivity, "HUD Overlay launched", Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) {
-                    Log.e("MainActivity", "Failed to start OverlayService", e)
-                    Toast.makeText(this@MainActivity, "Failed to start overlay: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }) {
-                Text("Launch HUD Overlay")
-            }
-        }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun DefaultPreview() {
+    BoltAssistTheme {
+        WeekGrid()
     }
 }
 
