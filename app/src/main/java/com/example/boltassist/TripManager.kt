@@ -134,4 +134,95 @@ class TripManager(private val context: Context) {
     }
     
     fun isRecording(): Boolean = currentTrip != null
+    
+    // Get earnings data for the weekly grid
+    fun getWeeklyEarningsGrid(): Array<Array<GridCellData>> {
+        val grid = Array(7) { Array(24) { GridCellData() } }
+        val trips = getAllTrips()
+        
+        trips.forEach { trip ->
+            if (trip.endTime != null && trip.durationMinutes > 0) {
+                val calendar = Calendar.getInstance()
+                try {
+                    val startDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
+                    calendar.time = startDate ?: return@forEach
+                    
+                    val dayOfWeek = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                        Calendar.MONDAY -> 0
+                        Calendar.TUESDAY -> 1
+                        Calendar.WEDNESDAY -> 2
+                        Calendar.THURSDAY -> 3
+                        Calendar.FRIDAY -> 4
+                        Calendar.SATURDAY -> 5
+                        Calendar.SUNDAY -> 6
+                        else -> 0
+                    }
+                    val hour = calendar.get(Calendar.HOUR_OF_DAY)
+                    
+                    if (dayOfWeek in 0..6 && hour in 0..23) {
+                        val cellData = grid[dayOfWeek][hour]
+                        cellData.tripCount++
+                        cellData.totalEarnings += trip.earningsPLN
+                        cellData.totalMinutes += trip.durationMinutes
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+        
+        return grid
+    }
+    
+    // Get current time slot for highlighting
+    fun getCurrentTimeSlot(): Pair<Int, Int> {
+        val calendar = Calendar.getInstance()
+        val dayOfWeek = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+            Calendar.MONDAY -> 0
+            Calendar.TUESDAY -> 1
+            Calendar.WEDNESDAY -> 2
+            Calendar.THURSDAY -> 3
+            Calendar.FRIDAY -> 4
+            Calendar.SATURDAY -> 5
+            Calendar.SUNDAY -> 6
+            else -> 0
+        }
+        val hour = calendar.get(Calendar.HOUR_OF_DAY)
+        return Pair(dayOfWeek, hour)
+    }
+}
+
+data class GridCellData(
+    var tripCount: Int = 0,
+    var totalEarnings: Int = 0, // In PLN
+    var totalMinutes: Int = 0
+) {
+    fun getHourlyEarnings(): Double {
+        return if (totalMinutes > 0) {
+            (totalEarnings.toDouble() / totalMinutes) * 60.0
+        } else 0.0
+    }
+    
+    fun hasEnoughData(): Boolean = tripCount >= 2
+    
+    fun getPerformanceColor(): android.graphics.Color {
+        if (!hasEnoughData()) return android.graphics.Color.valueOf(0f, 0f, 0f) // Black
+        
+        val hourlyEarnings = getHourlyEarnings()
+        // Define performance thresholds (PLN per hour)
+        val minEarnings = 10.0 // Red threshold
+        val maxEarnings = 50.0 // Green threshold
+        
+        val ratio = ((hourlyEarnings - minEarnings) / (maxEarnings - minEarnings)).coerceIn(0.0, 1.0)
+        
+        return if (ratio <= 0.5) {
+            // Red to Yellow
+            val localRatio = (ratio * 2).toFloat()
+            android.graphics.Color.valueOf(1f, localRatio, 0f)
+        } else {
+            // Yellow to Green
+            val localRatio = ((ratio - 0.5) * 2).toFloat()
+            android.graphics.Color.valueOf(1f - localRatio, 1f, 0f)
+        }
+    }
 } 

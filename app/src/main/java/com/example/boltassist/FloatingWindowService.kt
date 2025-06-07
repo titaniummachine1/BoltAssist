@@ -1,8 +1,11 @@
 package com.example.boltassist
 
+import android.Manifest
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.PixelFormat
+import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
@@ -13,7 +16,9 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.*
 
 class FloatingWindowService : Service() {
     private lateinit var windowManager: WindowManager
@@ -23,17 +28,21 @@ class FloatingWindowService : Service() {
     private var earnings = 0
     private var isRecording = false
     private lateinit var tripManager: TripManager
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private var currentLocation: Location? = null
     
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         tripManager = TripManager(this)
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         
         // Set up default storage
         val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist") 
             ?: filesDir.resolve("BoltAssist")
         tripManager.setStorageDirectory(defaultDir)
         
+        startLocationUpdates()
         createFloatingWindow()
     }
     
@@ -222,14 +231,46 @@ class FloatingWindowService : Service() {
         windowManager.addView(expandedView, params)
     }
     
+    private fun startLocationUpdates() {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        
+        val locationRequest = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            10000 // 10 seconds
+        ).build()
+        
+        val locationCallback = object : LocationCallback() {
+            override fun onLocationResult(locationResult: LocationResult) {
+                locationResult.lastLocation?.let { location ->
+                    currentLocation = location
+                }
+            }
+        }
+        
+        fusedLocationClient.requestLocationUpdates(
+            locationRequest,
+            locationCallback,
+            mainLooper
+        )
+    }
+    
     private fun toggleRecording() {
         if (isRecording) {
             // Stop recording
-            tripManager.stopTrip(null, earnings / 10) // Convert back to PLN
+            tripManager.stopTrip(currentLocation, earnings / 10) // Convert back to PLN
             isRecording = false
         } else {
             // Start recording
-            tripManager.startTrip(null)
+            tripManager.startTrip(currentLocation)
             isRecording = true
         }
     }

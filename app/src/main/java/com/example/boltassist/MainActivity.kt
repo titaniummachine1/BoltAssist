@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -106,6 +107,14 @@ fun MainScreen(
 ) {
     var selectedFolder by remember { mutableStateOf("Not Selected") }
     val context = LocalContext.current
+    val tripManager = remember { TripManager(context) }
+    
+    // Set up default storage
+    LaunchedEffect(Unit) {
+        val defaultDir = context.getExternalFilesDir(null)?.resolve("BoltAssist") 
+            ?: context.filesDir.resolve("BoltAssist")
+        tripManager.setStorageDirectory(defaultDir)
+    }
     
     Column(
         modifier = Modifier
@@ -114,22 +123,7 @@ fun MainScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // 7 rows (days) x 24 columns (hourly slots)
-        Column(
-            verticalArrangement = Arrangement.spacedBy(1.dp)
-        ) {
-            repeat(7) { dayIndex ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(1.dp)
-                ) {
-                    repeat(24) { hourIndex ->
-                        GridCell(
-                            dayIndex = dayIndex,
-                            hourIndex = hourIndex
-                        )
-                    }
-                }
-            }
-        }
+        WeeklyEarningsGrid(tripManager = tripManager)
         
         Spacer(modifier = Modifier.height(8.dp))
         
@@ -212,13 +206,67 @@ fun MainScreen(
 }
 
 @Composable
-fun GridCell(dayIndex: Int, hourIndex: Int) {
-    // All cells start as "No Data" (black) - will be filled naturally with trip data
+fun WeeklyEarningsGrid(tripManager: TripManager) {
+    var gridData by remember { mutableStateOf(tripManager.getWeeklyEarningsGrid()) }
+    val currentTimeSlot = tripManager.getCurrentTimeSlot()
+    
+    // Refresh data every minute
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60000) // 1 minute
+            gridData = tripManager.getWeeklyEarningsGrid()
+        }
+    }
+    
+    Column(
+        verticalArrangement = Arrangement.spacedBy(1.dp)
+    ) {
+        repeat(7) { dayIndex ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                repeat(24) { hourIndex ->
+                    GridCell(
+                        dayIndex = dayIndex,
+                        hourIndex = hourIndex,
+                        cellData = gridData[dayIndex][hourIndex],
+                        isCurrentTime = currentTimeSlot.first == dayIndex && currentTimeSlot.second == hourIndex
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GridCell(dayIndex: Int, hourIndex: Int, cellData: GridCellData, isCurrentTime: Boolean) {
+    val backgroundColor = if (cellData.hasEnoughData()) {
+        val hourlyEarnings = cellData.getHourlyEarnings()
+        val minEarnings = 10.0
+        val maxEarnings = 50.0
+        val ratio = ((hourlyEarnings - minEarnings) / (maxEarnings - minEarnings)).coerceIn(0.0, 1.0)
+        
+        if (ratio <= 0.5) {
+            // Red to Yellow
+            val localRatio = (ratio * 2).toFloat()
+            Color(1f, localRatio, 0f)
+        } else {
+            // Yellow to Green
+            val localRatio = ((ratio - 0.5) * 2).toFloat()
+            Color(1f - localRatio, 1f, 0f)
+        }
+    } else {
+        Color.Black // Not enough data
+    }
+    
+    val borderColor = if (isCurrentTime) Color.Blue else Color.Gray
+    val borderWidth = if (isCurrentTime) 2.dp else 0.5.dp
+    
     Box(
         modifier = Modifier
             .size(25.dp)
-            .background(Color.Black)
-            .border(0.5.dp, Color.Gray)
+            .background(backgroundColor)
+            .border(borderWidth, borderColor)
     )
 }
 
