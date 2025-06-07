@@ -310,12 +310,17 @@ fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
         modifier = Modifier
             .size(25.dp)
             .background(fillColor)
-            .border(
-                width = if (isLegendary || isCurrentTime) 2.dp else 0.5.dp,
-                color = when {
-                    isCurrentTime -> Color.Blue
-                    isLegendary -> Color(1f, 0.65f, 0f)
-                    else -> Color.Gray
+            // Outer blue border for current hour
+            .then(if (isCurrentTime) Modifier.border(2.dp, Color.Blue) else Modifier)
+            // Inner border: orange for legendary, gray default
+            .then(
+                when {
+                    isLegendary -> Modifier
+                        // pad inside blue border so orange is nested
+                        .padding(if (isCurrentTime) 2.dp else 0.dp)
+                        .border(2.dp, Color(1f, 0.65f, 0f))
+                    !isCurrentTime -> Modifier.border(0.5.dp, Color.Gray)
+                    else -> Modifier
                 }
             )
     ) {
