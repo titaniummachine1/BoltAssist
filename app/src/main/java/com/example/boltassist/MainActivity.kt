@@ -2,7 +2,9 @@ package com.example.boltassist
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,6 +45,14 @@ class MainActivity : ComponentActivity() {
         }
     }
     
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { 
+        if (canDrawOverlays()) {
+            startFloatingWindow()
+        }
+    }
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -51,24 +61,51 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    WeekGrid { callback ->
-                        onFolderSelected = callback
-                        directoryPickerLauncher.launch(null)
-                    }
+                    MainScreen(
+                        onStartFloatingWindow = { requestOverlayPermissionAndStart() },
+                        onFolderSelect = { callback ->
+                            onFolderSelected = callback
+                            directoryPickerLauncher.launch(null)
+                        }
+                    )
                 }
             }
         }
     }
+    
+    private fun canDrawOverlays(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(this)
+        } else {
+            true
+        }
+    }
+    
+    private fun requestOverlayPermissionAndStart() {
+        if (canDrawOverlays()) {
+            startFloatingWindow()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            overlayPermissionLauncher.launch(intent)
+        }
+    }
+    
+    private fun startFloatingWindow() {
+        val intent = Intent(this, FloatingWindowService::class.java)
+        startService(intent)
+        finish() // Close main activity
+    }
 }
 
 @Composable
-fun WeekGrid(onFolderPickerRequest: ((String) -> Unit) -> Unit) {
-    var isRecording by remember { mutableStateOf(false) }
-    var currentEarnings by remember { mutableStateOf(0) }
+fun MainScreen(
+    onStartFloatingWindow: () -> Unit,
+    onFolderSelect: ((String) -> Unit) -> Unit
+) {
     var selectedFolder by remember { mutableStateOf("Not Selected") }
-    var selectedFolderPath by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
-    val tripManager = remember { TripManager(context) }
     
     Column(
         modifier = Modifier
@@ -108,31 +145,69 @@ fun WeekGrid(onFolderPickerRequest: ((String) -> Unit) -> Unit) {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Trip Recording Controls
-        TripControls(
-            isRecording = isRecording,
-            currentEarnings = currentEarnings,
-            selectedFolder = selectedFolder,
-            onRecordingToggle = { isRecording = !isRecording },
-            onEarningsChange = { change -> 
-                currentEarnings = (currentEarnings + change).coerceAtLeast(0)
-            },
-            onFolderSelect = { 
-                onFolderPickerRequest { folderPath ->
-                    selectedFolderPath = folderPath
-                    selectedFolder = "Selected"
-                    // Set up storage directory for trip manager
-                    try {
-                        val externalDir = File(context.getExternalFilesDir(null), "BoltAssist")
-                        tripManager.setStorageDirectory(externalDir)
-                    } catch (e: Exception) {
-                        // Fallback to internal storage
-                        val internalDir = File(context.filesDir, "BoltAssist")
-                        tripManager.setStorageDirectory(internalDir)
+        // Setup Controls
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Folder Selection
+            Button(
+                onClick = { 
+                    onFolderSelect { folderPath ->
+                        selectedFolder = "Selected"
                     }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (selectedFolder == "Not Selected") Color.Gray else Color.Blue
+                )
+            ) {
+                Text("Select Storage Folder: $selectedFolder")
+            }
+            
+            // Important: Overlay Permission Notice
+            Card(
+                modifier = Modifier.padding(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.Yellow.copy(alpha = 0.3f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "⚠️ IMPORTANT",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Red
+                    )
+                    Text(
+                        text = "You must grant overlay permission for the floating window to work!",
+                        fontSize = 14.sp,
+                        color = Color.Black
+                    )
                 }
             }
-        )
+            
+            // Start Floating Assistant
+            Button(
+                onClick = onStartFloatingWindow,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Green
+                ),
+                modifier = Modifier.size(250.dp, 80.dp)
+            ) {
+                Text(
+                    text = "Grant Permission & Start\nDrive Assistant",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            
+            Text(
+                text = "This will create a draggable floating 'Help' button for recording trips while driving",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+        }
     }
 }
 
@@ -167,83 +242,16 @@ fun LegendItem(color: Color, label: String) {
     }
 }
 
-@Composable
-fun TripControls(
-    isRecording: Boolean,
-    currentEarnings: Int,
-    selectedFolder: String,
-    onRecordingToggle: () -> Unit,
-    onEarningsChange: (Int) -> Unit,
-    onFolderSelect: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        // Folder Selection
-        Button(
-            onClick = onFolderSelect,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (selectedFolder == "Not Selected") Color.Gray else Color.Blue
-            )
-        ) {
-            Text("Select Storage Folder: $selectedFolder")
-        }
-        
-        // Recording Status
-        Text(
-            text = if (isRecording) "Recording Trip..." else "Ready to Record",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (isRecording) Color.Red else Color.Gray
-        )
-        
-        // Earnings Control
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            IconButton(
-                onClick = { onEarningsChange(-5) },
-                enabled = currentEarnings > 0
-            ) {
-                Text("-5", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
-            
-            Text(
-                text = "${currentEarnings} PLN",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(80.dp)
-            )
-            
-            IconButton(onClick = { onEarningsChange(5) }) {
-                Text("+5", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-        
-        // Start/Stop Button
-        Button(
-            onClick = onRecordingToggle,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isRecording) Color.Red else Color.Green
-            ),
-            modifier = Modifier.size(120.dp, 48.dp)
-        ) {
-            Text(
-                text = if (isRecording) "■ STOP" else "▶ START",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
-}
+
 
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
     BoltAssistTheme {
-        WeekGrid { }
+        MainScreen(
+            onStartFloatingWindow = { },
+            onFolderSelect = { }
+        )
     }
 }
 
