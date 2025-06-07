@@ -36,7 +36,11 @@ class FloatingWindowService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        TripManager.initialize(this)
+        // Only initialize TripManager if not already done - don't clear existing data
+        if (!TripManager.isInitialized()) {
+            TripManager.initialize(this)
+        }
+        android.util.Log.d("BoltAssist", "FloatingWindowService started - TripManager has ${TripManager.tripsCache.size} trips")
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         
         startLocationUpdates()

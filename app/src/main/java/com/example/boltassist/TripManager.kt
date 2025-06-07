@@ -35,10 +35,10 @@ data class LocationData(
 
 // Kalman filter state for each hour of each day
 data class KalmanState(
-    var estimate: Double = 0.0,        // Current earnings estimate
-    var errorCovariance: Double = 1.0, // Uncertainty in estimate
-    val processNoise: Double = 0.1,    // How much we expect earnings to change
-    val measurementNoise: Double = 0.5 // Noise in our measurements
+    var estimate: Double = 5.0,        // Start with 5 PLN baseline expectation
+    var errorCovariance: Double = 25.0, // Higher uncertainty for faster learning from sparse data
+    val processNoise: Double = 1.0,    // Allow gradual change over time
+    val measurementNoise: Double = 4.0 // Account for variability in trip earnings
 )
 
 object TripManager {
@@ -54,8 +54,11 @@ object TripManager {
     private var storageTreeUri: Uri? = null
     // Map of month-day (MM-dd) -> holiday name
     private val holidayMap = mutableMapOf<String, String>()
-    // Kalman filter states for each day/hour combination
+    // Kalman filter states for each day/hour combination - persistent across calls
     private val kalmanStates = Array(7) { Array(24) { KalmanState() } }
+    private var kalmanInitialized = false
+    
+    fun isInitialized(): Boolean = ::context.isInitialized
     
     fun initialize(appContext: Context) {
         if (!::context.isInitialized) {
@@ -71,6 +74,14 @@ object TripManager {
                 android.util.Log.w("BoltAssist", "Sentry initialization skipped: $e")
             }
             
+            // Ensure default storage is always available
+            val defaultDir = context.getExternalFilesDir(null)?.resolve("BoltAssist")
+                ?: context.filesDir.resolve("BoltAssist")
+            if (storageDirectory == null) {
+                setStorageDirectory(defaultDir)
+                android.util.Log.d("BoltAssist", "Set default storage directory: ${defaultDir.absolutePath}")
+            }
+            
             // Load existing trips from files
             tryLoadExistingTrips()
             // Fetch public holidays (Poland) asynchronously
@@ -78,6 +89,8 @@ object TripManager {
                 val year = Calendar.getInstance().get(Calendar.YEAR)
                 fetchHolidays(year)
             }
+        } else {
+            android.util.Log.d("BoltAssist", "TripManager already initialized with ${_tripsCache.size} trips")
         }
     }
     
@@ -206,6 +219,8 @@ object TripManager {
         _tripsCache.add(trip)
         android.util.Log.d("BoltAssist", "REAL TRIP: Trip added to cache. After: ${_tripsCache.size}")
         
+        // No need to update complex filters - predictions are calculated on-demand from historical data
+        
         // Validate time alignment for UI highlighting
         try {
             val startDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
@@ -254,11 +269,19 @@ object TripManager {
             android.util.Log.e("BoltAssist", "REAL TRIP: NO DATA FOUND IN GRID AFTER ADDING TRIP!")
         }
         
-        // Save immediately to files for persistence (real-time sync)
-        if (storageTreeUri != null) {
-            saveTripsToUri()
-        } else if (storageDirectory != null) {
-            saveAllTripsToFile()
+        // Force immediate save to files for persistence (critical for time travel testing)
+        try {
+            if (storageTreeUri != null) {
+                saveTripsToUri()
+                android.util.Log.d("BoltAssist", "REAL TRIP: Forced save to SAF URI completed")
+            } else if (storageDirectory != null) {
+                saveAllTripsToFile()
+                android.util.Log.d("BoltAssist", "REAL TRIP: Forced save to file completed")
+            } else {
+                android.util.Log.w("BoltAssist", "REAL TRIP: No storage configured - data will be lost!")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "REAL TRIP: Failed to save immediately", e)
         }
         android.util.Log.d("BoltAssist", "REAL TRIP: Trip saved to cache and files: $trip")
     }
@@ -333,6 +356,9 @@ object TripManager {
         testTrips.forEach { trip ->
             android.util.Log.d("BoltAssist", "TEST DATA: Adding trip to cache. Before: ${_tripsCache.size}")
             _tripsCache.add(trip) // SAME METHOD AS REAL TRIPS
+            
+            // Test data will be included in historical predictions automatically
+            
             android.util.Log.d("BoltAssist", "TEST DATA: Trip added to cache. After: ${_tripsCache.size}")
             android.util.Log.d("BoltAssist", "TEST DATA: Added trip: $trip")
         }
@@ -344,6 +370,16 @@ object TripManager {
             for (hour in 0..23) {
                 if (testGrid[day][hour] > 0) {
                     android.util.Log.d("BoltAssist", "TEST DATA: Grid[$day][$hour] = ${testGrid[day][hour]} PLN")
+                }
+            }
+        }
+        
+        // Test Kalman predictions after adding test data
+        val kalmanGrid = getKalmanPredictionGrid()
+        for (day in 0..6) {
+            for (hour in 0..23) {
+                if (kalmanGrid[day][hour] > 1.0) {
+                    android.util.Log.d("BoltAssist", "TEST DATA: Kalman[$day][$hour] = ${kalmanGrid[day][hour]} PLN")
                 }
             }
         }
@@ -716,77 +752,114 @@ object TripManager {
     }
 
     /**
-     * Kalman filter-based prediction grid that quickly adapts to new data
-     * while maintaining historical patterns
+     * Holiday-aware Kalman prediction grid that learns from historical data
+     * with matching holiday tags for accurate week-to-week predictions
      */
     fun getKalmanPredictionGrid(): Array<DoubleArray> {
         val grid = Array(7) { DoubleArray(24) { 0.0 } }
         val trips = getAllTrips()
+        val calendar = Calendar.getInstance()
+        val currentWeek = calendar.get(Calendar.WEEK_OF_YEAR)
         
-        // Reset Kalman states
+        // Get today's holiday tag for context-aware predictions
+        val today = calendar.time
+        val todayTag = getDayTag(today)
+        
+        android.util.Log.d("BoltAssist", "Kalman predictions with holiday context: todayTag='$todayTag'")
+        
+        // For each day/hour slot, find historical data with matching holiday context
         for (day in 0..6) {
             for (hour in 0..23) {
-                kalmanStates[day][hour] = KalmanState()
-            }
-        }
-        
-        // Process trips chronologically to update Kalman filter
-        val sortedTrips = trips.sortedBy { it.startTime }
-        
-        sortedTrips.forEach { trip ->
-            if (trip.endTime != null && trip.earningsPLN > 0) {
-                try {
-                    val startDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
-                    val calendar = Calendar.getInstance()
-                    calendar.time = startDate ?: return@forEach
-                    
-                    val day = when (calendar.get(Calendar.DAY_OF_WEEK)) {
-                        Calendar.MONDAY -> 0
-                        Calendar.TUESDAY -> 1  
-                        Calendar.WEDNESDAY -> 2
-                        Calendar.THURSDAY -> 3
-                        Calendar.FRIDAY -> 4
-                        Calendar.SATURDAY -> 5
-                        Calendar.SUNDAY -> 6
-                        else -> 0
+                val historicalEarnings = mutableListOf<Double>()
+                
+                // Collect historical earnings for this day/hour with matching holiday context
+                trips.filter { it.endTime != null && it.earningsPLN > 0 }.forEach { trip ->
+                    try {
+                        val tripDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
+                        if (tripDate != null) {
+                            calendar.time = tripDate
+                            val tripWeek = calendar.get(Calendar.WEEK_OF_YEAR)
+                            
+                            // Only use data from previous weeks (not current week)
+                            if (tripWeek != currentWeek) {
+                                val tripDay = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                                    Calendar.MONDAY -> 0
+                                    Calendar.TUESDAY -> 1  
+                                    Calendar.WEDNESDAY -> 2
+                                    Calendar.THURSDAY -> 3
+                                    Calendar.FRIDAY -> 4
+                                    Calendar.SATURDAY -> 5
+                                    Calendar.SUNDAY -> 6
+                                    else -> 0
+                                }
+                                val tripHour = calendar.get(Calendar.HOUR_OF_DAY)
+                                val tripHourIndex = (tripHour - 1 + 24) % 24
+                                
+                                // Match day and hour
+                                if (tripDay == day && tripHourIndex == hour) {
+                                    val tripTag = getDayTag(tripDate)
+                                    
+                                    // Holiday context matching:
+                                    // - If today has no tag, use data from days with no tags
+                                    // - If today has a tag, use data from days with same tag
+                                    val contextMatch = if (todayTag == null) {
+                                        tripTag == null // Regular day - use regular day data
+                                    } else {
+                                        tripTag == todayTag // Holiday - use same holiday data
+                                    }
+                                    
+                                    if (contextMatch) {
+                                        historicalEarnings.add(trip.earningsPLN.toDouble())
+                                        android.util.Log.d("BoltAssist", "Historical data: Day=$day Hour=$hour Tag='$tripTag' -> ${trip.earningsPLN} PLN")
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("BoltAssist", "Error processing trip for prediction: $trip", e)
                     }
-                    val rawHour = calendar.get(Calendar.HOUR_OF_DAY)
-                    val hourIndex = (rawHour - 1 + 24) % 24
+                }
+                
+                // Calculate prediction based on historical data
+                if (historicalEarnings.isNotEmpty()) {
+                    // Use average of historical data with some smart weighting
+                    val average = historicalEarnings.average()
+                    val prediction = when {
+                        historicalEarnings.size >= 3 -> average // Good data, use average
+                        historicalEarnings.size == 2 -> average * 0.9 // Medium confidence
+                        else -> average // Use exact value for single data point (time travel testing)
+                    }
                     
-                    // Update Kalman filter for this time slot
-                    updateKalmanFilter(day, hourIndex, trip.earningsPLN.toDouble())
+                    grid[day][hour] = if (prediction >= 5.0) prediction else 0.0 // Minimum 5 PLN (single ride)
                     
-                } catch (e: Exception) {
-                    android.util.Log.e("BoltAssist", "ERROR processing trip for Kalman: $trip", e)
+                    if (grid[day][hour] > 0) {
+                        android.util.Log.d("BoltAssist", "Prediction: Day=$day Hour=$hour -> ${grid[day][hour]} PLN (from ${historicalEarnings.size} samples, tag='$todayTag')")
+                    }
+                } else {
+                    // No historical data - provide crude baseline predictions for common hours
+                    val crudeBaseline = when (hour) {
+                        in 6..9 -> 15.0   // Morning rush: 7-10 AM
+                        in 11..13 -> 20.0 // Lunch time: 12-2 PM  
+                        in 16..19 -> 25.0 // Evening rush: 5-8 PM
+                        in 20..22 -> 12.0 // Night: 9-11 PM
+                        else -> 0.0       // Other hours: no prediction
+                    }
+                    
+                    // Only show crude predictions for regular days (no holidays without data)
+                    grid[day][hour] = if (todayTag == null && crudeBaseline >= 5.0) crudeBaseline else 0.0
+                    
+                    if (grid[day][hour] > 0) {
+                        android.util.Log.d("BoltAssist", "Crude prediction: Day=$day Hour=$hour -> ${grid[day][hour]} PLN (baseline)")
+                    }
                 }
             }
         }
         
-        // Extract predictions from Kalman states
-        for (day in 0..6) {
-            for (hour in 0..23) {
-                grid[day][hour] = kalmanStates[day][hour].estimate
-            }
-        }
-        
-        android.util.Log.d("BoltAssist", "Kalman prediction grid generated")
         return grid
     }
     
-    private fun updateKalmanFilter(day: Int, hour: Int, measurement: Double) {
-        val state = kalmanStates[day][hour]
-        
-        // Prediction step
-        val predictedEstimate = state.estimate
-        val predictedCovariance = state.errorCovariance + state.processNoise
-        
-        // Update step
-        val kalmanGain = predictedCovariance / (predictedCovariance + state.measurementNoise)
-        state.estimate = predictedEstimate + kalmanGain * (measurement - predictedEstimate)
-        state.errorCovariance = (1 - kalmanGain) * predictedCovariance
-        
-        android.util.Log.d("BoltAssist", "Kalman updated [$day][$hour]: estimate=${state.estimate}, measurement=$measurement, gain=$kalmanGain")
-    }
+    // Note: Switched from complex Kalman filter to simpler holiday-aware historical averaging
+    // This provides more intuitive and predictable results for week-to-week earnings patterns
 }
 
  

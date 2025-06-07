@@ -231,12 +231,16 @@ fun WeeklyEarningsGrid() {
     val trips = TripManager.tripsCache
     val actualGrid = TripManager.getWeeklyGrid()
     val kalmanGrid = TripManager.getKalmanPredictionGrid()
-    // Track system time to update highlight immediately and every 5 seconds for responsiveness
+    // Track system time to update highlight immediately and every 2 seconds for responsiveness
     var currentTime by remember { mutableStateOf(TripManager.getCurrentTime()) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(5_000L) // Update every 5 seconds instead of 60 for quicker response to time changes
-            currentTime = TripManager.getCurrentTime()
+            delay(2_000L) // Update every 2 seconds for faster response to time travel
+            val newTime = TripManager.getCurrentTime()
+            if (newTime != currentTime) {
+                android.util.Log.d("BoltAssist", "Time change detected: $currentTime -> $newTime")
+                currentTime = newTime
+            }
         }
     }
     // Compute header index for highlighting (map hour 0-23 to index 0-23 for 1-24 labels)
@@ -320,12 +324,34 @@ fun WeeklyEarningsGrid() {
                     
                     // Hour cells
                     repeat(24) { hour ->
-                        // Choose actual earnings for current hour, Kalman predictions for others
                         val isCurrent = day == currentTime.first && hour == highlightIndex
-                        val value = if (isCurrent && actualGrid[day][hour] > 0) {
-                            actualGrid[day][hour] // Show actual data if available for current time
+                        val currentDay = currentTime.first
+                        val currentHour = currentTime.second
+                        
+                        val value = if (day == currentDay) {
+                            // Current day: past/current hours show actual, future hours show predictions
+                            if (hour <= currentHour) {
+                                // Past and current hours of today: show actual earnings
+                                if (actualGrid[day][hour] > 0.0) {
+                                    actualGrid[day][hour]
+                                } else {
+                                    0.0 // No actual data - black cell
+                                }
+                            } else {
+                                // Future hours of today: show predictions
+                                if (kalmanGrid[day][hour] >= 5.0) {
+                                    kalmanGrid[day][hour] // Prediction for upcoming hours (minimum 5 PLN)
+                                } else {
+                                    0.0 // No prediction or too low - black cell
+                                }
+                            }
                         } else {
-                            kalmanGrid[day][hour] // Use Kalman filter predictions otherwise
+                            // Past days and future days: always show predictions from historical data
+                            if (kalmanGrid[day][hour] >= 5.0) {
+                                kalmanGrid[day][hour] // Historical predictions (minimum 5 PLN)
+                            } else {
+                                0.0 // No prediction or too low - black cell
+                            }
                         }
                         SimpleGridCell(
                             earnings = value,
@@ -388,12 +414,34 @@ fun WeeklyEarningsGrid() {
                         
                         // Day cells for this hour
                         repeat(7) { day ->
-                            // Choose actual earnings for current hour, Kalman predictions for others
                             val isCurrent = day == currentTime.first && hour == highlightIndex
-                            val value = if (isCurrent && actualGrid[day][hour] > 0) {
-                                actualGrid[day][hour] // Show actual data if available for current time
+                            val currentDay = currentTime.first
+                            val currentHour = currentTime.second
+                            
+                            val value = if (day == currentDay) {
+                                // Current day: past/current hours show actual, future hours show predictions
+                                if (hour <= currentHour) {
+                                    // Past and current hours of today: show actual earnings
+                                    if (actualGrid[day][hour] > 0.0) {
+                                        actualGrid[day][hour]
+                                    } else {
+                                        0.0 // No actual data - black cell
+                                    }
+                                } else {
+                                    // Future hours of today: show predictions
+                                    if (kalmanGrid[day][hour] >= 5.0) {
+                                        kalmanGrid[day][hour] // Prediction for upcoming hours (minimum 5 PLN)
+                                    } else {
+                                        0.0 // No prediction or too low - black cell
+                                    }
+                                }
                             } else {
-                                kalmanGrid[day][hour] // Use Kalman filter predictions otherwise
+                                // Past days and future days: always show predictions from historical data
+                                if (kalmanGrid[day][hour] >= 5.0) {
+                                    kalmanGrid[day][hour] // Historical predictions (minimum 5 PLN)
+                                } else {
+                                    0.0 // No prediction or too low - black cell
+                                }
                             }
                             SimpleGridCell(
                                 earnings = value,
@@ -438,7 +486,8 @@ fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
             .background(fillColor)
             .border(borderWidth, borderColor)
     ) {
-        if (earnings > 0.0) {
+        // Only show text for earnings > 0.5 PLN (to avoid showing very small predictions as "0")
+        if (earnings >= 0.5) {
             Text(
                 text = "${earnings.toInt()}",
                 fontSize = 8.sp,
@@ -447,6 +496,7 @@ fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
                 modifier = Modifier.align(Alignment.Center)
             )
         }
+        // No text for 0 or very small values - just pure black/colored cell
     }
 }
 
