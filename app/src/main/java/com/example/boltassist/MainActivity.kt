@@ -15,10 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,7 +30,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.lerp
 import kotlinx.coroutines.delay
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalNavigationDrawer
+import kotlinx.coroutines.launch
+import androidx.compose.material3.ExperimentalMaterial3Api
 
+@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
     private var onFolderSelected: ((String) -> Unit)? = null
     private var selectedStoragePath: String? = null
@@ -77,18 +80,76 @@ class MainActivity : ComponentActivity() {
         
         setContent {
             BoltAssistTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                // Navigation drawer state
+                val drawerState = rememberDrawerState(DrawerValue.Closed)
+                val scope = rememberCoroutineScope()
+                // Selected screen
+                var selectedScreen by remember { mutableStateOf<Screen>(Screen.Graph) }
+                // Storage path for Settings
+                var displayPath by remember { mutableStateOf("Default App Directory") }
+                // Init TripManager and load persisted path
+                LaunchedEffect(Unit) {
+                    TripManager.initialize(this@MainActivity)
+                    val prefs = getSharedPreferences("BoltAssist", MODE_PRIVATE)
+                    val saved = prefs.getString("storage_path", null)
+                    if (saved != null) {
+                        TripManager.setStorageDirectoryUri(Uri.parse(saved))
+                        displayPath = Uri.parse(saved).lastPathSegment ?: saved
+                    } else {
+                        val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist")
+                            ?: filesDir.resolve("BoltAssist")
+                        TripManager.setStorageDirectory(defaultDir)
+                        displayPath = "Default App Directory"
+                    }
+                }
+                // Drawer
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    drawerContent = {
+                        ModalDrawerSheet {
+                            Spacer(Modifier.height(16.dp))
+                            Screen.values().forEach { screen ->
+                                NavigationDrawerItem(
+                                    label = { Text(screen.title) },
+                                    selected = screen == selectedScreen,
+                                    onClick = {
+                                        selectedScreen = screen
+                                        scope.launch { drawerState.close() }
+                                    },
+                                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                                )
+                            }
+                        }
+                    }
                 ) {
-                    MainScreen(
-                        onStartFloatingWindow = { requestOverlayPermissionAndStart() },
-                        onFolderSelect = { callback ->
-                            onFolderSelected = callback
-                            directoryPickerLauncher.launch(null)
-                        },
-                        savedStoragePath = selectedStoragePath
-                    )
+                    Scaffold(
+                        topBar = {
+                            CenterAlignedTopAppBar(
+                                navigationIcon = {
+                                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                        Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                                    }
+                                },
+                                title = { Text("BoltAssist") }
+                            )
+                        }
+                    ) { inner ->
+                        Box(Modifier.padding(inner)) {
+                            when (selectedScreen) {
+                                Screen.Graph -> GraphScreen(onStartFloatingWindow = { requestOverlayPermissionAndStart() })
+                                Screen.Map -> MapScreen()
+                                Screen.Settings -> SettingsScreen(
+                                    displayPath = displayPath,
+                                    onFolderSelect = {
+                                        onFolderSelected = { selectedPath ->
+                                            displayPath = Uri.parse(selectedPath).lastPathSegment ?: selectedPath
+                                        }
+                                        directoryPickerLauncher.launch(null)
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -123,83 +184,67 @@ class MainActivity : ComponentActivity() {
         
         startService(intent)
     }
+
+    // Define navigation targets
+    private enum class Screen(val title: String) { Graph("Graph"), Map("Map"), Settings("Settings") }
 }
 
 @Composable
-fun MainScreen(
-    onStartFloatingWindow: () -> Unit,
-    onFolderSelect: ((String) -> Unit) -> Unit,
-    savedStoragePath: String?
-) {
-    val context = LocalContext.current
+fun GraphScreen(onStartFloatingWindow: () -> Unit) {
+    // Get data for debugging display
+    val trips = TripManager.tripsCache
+    val kalmanGrid = TripManager.getKalmanPredictionGrid()
+    val actualGrid = TripManager.getWeeklyGrid()
     
-    // Storage path display state
-    var displayPath by remember { mutableStateOf("Default App Directory") }
-
-    // Initialize singleton TripManager and set storage
-    LaunchedEffect(savedStoragePath) {
-        TripManager.initialize(context)
-        
-        if (savedStoragePath != null) {
-            TripManager.setStorageDirectoryUri(Uri.parse(savedStoragePath))
-            displayPath = "Selected: ${Uri.parse(savedStoragePath).lastPathSegment}"
-        } else {
-            val defaultDir = context.getExternalFilesDir(null)?.resolve("BoltAssist")
-                ?: context.filesDir.resolve("BoltAssist")
-            TripManager.setStorageDirectory(defaultDir)
-            displayPath = "Default App Directory"
+    Column(Modifier.fillMaxSize().padding(8.dp)) {
+        Box(Modifier.weight(1f)) { WeeklyEarningsGrid() }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onStartFloatingWindow, Modifier.weight(1f)) { Text("Begin") }
         }
-        
-        android.util.Log.d("BoltAssist", "MainActivity: TripManager initialized with ${TripManager.tripsCache.size} trips")
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(8.dp)
-    ) {
-        // Storage status display
+        // Debug buttons for testing
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(onClick = { TripManager.generateTestData() }, Modifier.weight(1f)) { 
+                Text("Test Data", fontSize = 12.sp) 
+            }
+            Button(onClick = { TripManager.generateKalmanTestData() }, Modifier.weight(1f)) { 
+                Text("Kalman Test", fontSize = 12.sp) 
+            }
+        }
+        // Show current trip count for debugging
         Text(
-            text = "Storage: $displayPath",
-            fontSize = 12.sp,
+            text = "Trips: ${trips.size} | Grid shows Kalman predictions", 
+            fontSize = 10.sp, 
             color = Color.Gray,
-            modifier = Modifier.padding(bottom = 4.dp)
+            modifier = Modifier.padding(4.dp)
         )
-        // Grid
-        Box(modifier = Modifier.weight(1f)) {
-            WeeklyEarningsGrid()
+        // Show grid stats for debugging
+        val gridSum = kalmanGrid.sumOf { row -> row.sum() }
+        val actualSum = actualGrid.sumOf { row -> row.sum() }
+        Text(
+            text = "Kalman total: ${gridSum.toInt()} PLN | Actual total: ${actualSum.toInt()} PLN", 
+            fontSize = 10.sp, 
+            color = Color.Blue,
+            modifier = Modifier.padding(4.dp)
+        )
+    }
+}
+
+@Composable
+fun MapScreen() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text("Map tools coming soon…")
+    }
+}
+
+@Composable
+fun SettingsScreen(displayPath: String, onFolderSelect: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Storage Path", fontWeight = FontWeight.Bold)
+        Text(displayPath, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
+        Button(onClick = onFolderSelect, Modifier.fillMaxWidth()) {
+            Text("Select Directory")
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        // Legend
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            LegendItem(color = Color.Black, label = "No Data")
-            LegendItem(color = Color.Red, label = "Poor (<8)")
-            LegendItem(color = Color.Yellow, label = "Decent (8-25)")
-            LegendItem(color = Color.Green, label = "Good (25-45)")
-            // 'Excellent' uses a custom blue
-            val excellentBlue = Color(0.2f, 0.6f, 1f)
-            LegendItem(color = excellentBlue, label = "Excellent (45+)")
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        // Buttons
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Button(onClick = {
-                onFolderSelect { newUri ->
-                    TripManager.setStorageDirectoryUri(Uri.parse(newUri))
-                    displayPath = "Selected: ${Uri.parse(newUri).lastPathSegment}"
-                }
-            }) {
-                Text("Select Directory")
-            }
-            Button(onClick = onStartFloatingWindow, modifier = Modifier.weight(1f)) {
-                Text("Begin")
-            }
-        }
-        Spacer(modifier = Modifier.height(4.dp))
     }
 }
 
@@ -208,6 +253,7 @@ fun WeeklyEarningsGrid() {
     // Get live grid data
     val trips = TripManager.tripsCache
     val actualGrid = TripManager.getWeeklyGrid()
+    val kalmanGrid = TripManager.getKalmanPredictionGrid()
     val expectedGrid = TripManager.getExpectedGrid()
     // Track system time to update highlight each minute
     var currentTime by remember { mutableStateOf(TripManager.getCurrentTime()) }
@@ -274,9 +320,13 @@ fun WeeklyEarningsGrid() {
                 
                 // Hour cells
                 repeat(24) { hour ->
-                    // Choose actual earnings for current hour, expected for others
+                    // Choose actual earnings for current hour, Kalman predictions for others
                     val isCurrent = day == currentTime.first && hour == highlightIndex
-                    val value = if (isCurrent) actualGrid[day][hour] else expectedGrid[day][hour]
+                    val value = if (isCurrent && actualGrid[day][hour] > 0) {
+                        actualGrid[day][hour] // Show actual data if available for current time
+                    } else {
+                        kalmanGrid[day][hour] // Use Kalman filter predictions otherwise
+                    }
                     SimpleGridCell(
                         earnings = value,
                         isCurrentTime = isCurrent
@@ -354,15 +404,12 @@ fun LegendItem(color: Color, label: String, isSpecial: Boolean = false) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
     BoltAssistTheme {
-        MainScreen(
-            onStartFloatingWindow = {},
-            onFolderSelect = { _ -> },
-            savedStoragePath = null
-        )
+        GraphScreen(onStartFloatingWindow = {})
     }
 }
 
