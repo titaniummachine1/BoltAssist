@@ -131,17 +131,13 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
     
-    // Initialize singleton TripManager
-    LaunchedEffect(Unit) {
-        TripManager.initialize(context)
-    }
-    
     // Storage path display state
     var displayPath by remember { mutableStateOf("Default App Directory") }
 
-    // Set storage directory based on selection or default
+    // Initialize singleton TripManager and set storage
     LaunchedEffect(savedStoragePath) {
         TripManager.initialize(context)
+        
         if (savedStoragePath != null) {
             TripManager.setStorageDirectoryUri(Uri.parse(savedStoragePath))
             displayPath = "Selected: ${Uri.parse(savedStoragePath).lastPathSegment}"
@@ -151,6 +147,8 @@ fun MainScreen(
             TripManager.setStorageDirectory(defaultDir)
             displayPath = "Default App Directory"
         }
+        
+        android.util.Log.d("BoltAssist", "MainActivity: TripManager initialized with ${TripManager.tripsCache.size} trips")
     }
 
     Column(
@@ -193,6 +191,12 @@ fun MainScreen(
             }) {
                 Text("Select Directory")
             }
+            Button(onClick = {
+                TripManager.generateTestData()
+                android.util.Log.d("BoltAssist", "Test data generated, cache size: ${TripManager.tripsCache.size}")
+            }) {
+                Text("Test Data")
+            }
             Button(onClick = onStartFloatingWindow, modifier = Modifier.weight(1f)) {
                 Text("Begin")
             }
@@ -203,33 +207,68 @@ fun MainScreen(
 
 @Composable
 fun WeeklyEarningsGrid() {
-    // Subscribe to tripsCache for live updates
+    // Get live grid data
     val trips = TripManager.tripsCache
-    // Direct calculation triggers recomposition when tripsCache changes
-    val gridData = TripManager.getWeeklyEarningsGrid()
-    val currentTimeSlot = TripManager.getCurrentTimeSlot()
+    val gridData = TripManager.getWeeklyGrid()
+    val currentTime = TripManager.getCurrentTime()
     
-    // Debug logging
     LaunchedEffect(trips.size) {
         android.util.Log.d("BoltAssist", "Grid recomposing with ${trips.size} trips")
     }
 
+    val polishDays = listOf("PN", "WT", "ŚR", "CZ", "PT", "SB", "ND")
+
     Column(
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        repeat(7) { dayIndex ->
+        // Header row with hour numbers
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            // Empty cell for day labels column
+            Box(modifier = Modifier.size(25.dp))
+            
+            // Hour numbers 1-24
+            repeat(24) { hour ->
+                Box(
+                    modifier = Modifier.size(25.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "${hour + 1}",
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black
+                    )
+                }
+            }
+        }
+        
+        // Data rows with day labels
+        repeat(7) { day ->
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                repeat(24) { hourIndex ->
-                    GridCell(
-                        dayIndex = dayIndex,
-                        hourIndex = hourIndex,
-                        cellData = gridData[dayIndex][hourIndex],
-                        isCurrentTime = currentTimeSlot.first == dayIndex && currentTimeSlot.second == hourIndex
+                // Day label
+                Box(
+                    modifier = Modifier.size(25.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = polishDays[day],
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black
+                    )
+                }
+                
+                // Hour cells
+                repeat(24) { hour ->
+                    SimpleGridCell(
+                        earnings = gridData[day][hour],
+                        isCurrentTime = currentTime.first == day && currentTime.second == hour
                     )
                 }
             }
@@ -238,48 +277,21 @@ fun WeeklyEarningsGrid() {
 }
 
 @Composable
-fun GridCell(dayIndex: Int, hourIndex: Int, cellData: GridCellData, isCurrentTime: Boolean) {
-    val backgroundColor = if (cellData.hasEnoughData()) {
-        val hourlyEarnings = cellData.getHourlyEarnings()
-        when {
-            hourlyEarnings >= 80.0 -> Color(1f, 0.84f, 0f) // LEGENDARY - Pure Gold
-            hourlyEarnings >= 45.0 -> {
-                // Good to Legendary gradient
-                val ratio = ((hourlyEarnings - 45.0) / 35.0).coerceIn(0.0, 1.0).toFloat()
-                Color(ratio, 1f, 0f)
-            }
-            hourlyEarnings >= 25.0 -> {
-                // Decent to Good
-                val ratio = ((hourlyEarnings - 25.0) / 20.0).coerceIn(0.0, 1.0).toFloat()
-                Color(1f - ratio, 1f, 0f)
-            }
-            hourlyEarnings >= 8.0 -> {
-                // Poor to Decent
-                val ratio = ((hourlyEarnings - 8.0) / 17.0).coerceIn(0.0, 1.0).toFloat()
-                Color(1f, ratio, 0f)
-            }
-            else -> Color(0.5f, 0f, 0f) // Very Poor - Dark Red
-        }
-    } else {
-        Color.Black // Not enough data
+fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
+    // Simple color calculation
+    val backgroundColor = when {
+        earnings == 0.0 -> Color.Black // No data
+        earnings >= 80.0 -> Color(1f, 0.84f, 0f) // LEGENDARY - Gold
+        earnings >= 45.0 -> Color.Green // Good
+        earnings >= 25.0 -> Color.Yellow // Decent  
+        earnings >= 8.0 -> Color.Red // Poor
+        else -> Color(0.5f, 0f, 0f) // Very Poor - Dark Red
     }
     
-    // Special effects for legendary and current time
-    val isLegendary = cellData.isLegendary()
-    val borderColor = when {
-        isLegendary && isCurrentTime -> Color.Magenta // Both legendary and current
-        isLegendary -> Color(1f, 0.65f, 0f) // Orange border for legendary
-        isCurrentTime -> Color.Blue // Blue for current time
-        else -> Color.Gray
-    }
-    val borderWidth = when {
-        isLegendary && isCurrentTime -> 4.dp // Extra thick for legendary + current
-        isLegendary -> 3.dp // Thick for legendary
-        isCurrentTime -> 2.dp // Medium for current time
-        else -> 0.5.dp
-    }
-    
-    val cellSize = if (isLegendary) 28.dp else 25.dp // Slightly bigger for legendary
+    // Consistent sizing and borders for all cells
+    val borderColor = if (isCurrentTime) Color.Blue else Color.Gray
+    val borderWidth = if (isCurrentTime) 2.dp else 0.5.dp
+    val cellSize = 25.dp // Same size for all cells
     
     Box(
         modifier = Modifier
@@ -287,10 +299,10 @@ fun GridCell(dayIndex: Int, hourIndex: Int, cellData: GridCellData, isCurrentTim
             .background(backgroundColor)
             .border(borderWidth, borderColor)
     ) {
-        // Add earnings text for legendary cells
-        if (isLegendary) {
+        // Show earnings text for any cell with data
+        if (earnings > 0.0) {
             Text(
-                text = "${cellData.getHourlyEarnings().toInt()}",
+                text = "${earnings.toInt()}",
                 fontSize = 8.sp,
                 color = Color.Black,
                 fontWeight = FontWeight.Bold,

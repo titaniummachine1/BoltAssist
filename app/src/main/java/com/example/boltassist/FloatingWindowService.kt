@@ -30,6 +30,7 @@ class FloatingWindowService : Service() {
     private var isRecording = false
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var currentLocation: Location? = null
+    private var moneyDisplay: TextView? = null
     
     override fun onCreate() {
         super.onCreate()
@@ -145,9 +146,9 @@ class FloatingWindowService : Service() {
             setPadding(20, 20, 20, 20)
         }
         
-        // START/STOP button (first row)
+        // START/END button (first row)
         val startStopButton = Button(this).apply {
-            text = if (isRecording) "STOP" else "START"
+            text = if (isRecording) "END" else "START"
             textSize = 18f
             setBackgroundColor(
                 if (isRecording) 
@@ -159,7 +160,7 @@ class FloatingWindowService : Service() {
             
             setOnClickListener {
                 toggleRecording()
-                text = if (isRecording) "STOP" else "START"
+                text = if (isRecording) "END" else "START"
                 setBackgroundColor(
                     if (isRecording) 
                         ContextCompat.getColor(this@FloatingWindowService, android.R.color.holo_red_dark)
@@ -170,7 +171,7 @@ class FloatingWindowService : Service() {
         }
         
         // Money display (second row)
-        val moneyDisplay = TextView(this).apply {
+        moneyDisplay = TextView(this).apply {
             text = "${earnings / 10.0} PLN"
             textSize = 20f
             gravity = Gravity.CENTER
@@ -185,7 +186,8 @@ class FloatingWindowService : Service() {
         }
         
         fun updateMoneyDisplay() {
-            moneyDisplay.text = "${earnings / 10.0} PLN"
+            moneyDisplay?.text = "${earnings / 10.0} PLN"
+            android.util.Log.d("BoltAssist", "FLOATING: Money display updated to ${earnings / 10.0} PLN")
         }
         
         val minusButton = Button(this).apply {
@@ -210,7 +212,7 @@ class FloatingWindowService : Service() {
         moneyLayout.addView(plusButton)
         
         layout.addView(startStopButton)
-        layout.addView(moneyDisplay)
+        layout.addView(moneyDisplay!!)
         layout.addView(moneyLayout)
         
         val params = WindowManager.LayoutParams(
@@ -277,15 +279,20 @@ class FloatingWindowService : Service() {
     private fun toggleRecording() {
         if (isRecording) {
             // Stop recording
-            android.util.Log.d("BoltAssist", "Stopping trip with earnings: ${earnings / 10} PLN")
+            android.util.Log.d("BoltAssist", "FLOATING: Stopping trip with earnings: ${earnings / 10} PLN (raw: $earnings)")
             val completedTrip = TripManager.stopTrip(currentLocation, earnings / 10) // Convert back to PLN
-            android.util.Log.d("BoltAssist", "Trip saved: $completedTrip")
+            android.util.Log.d("BoltAssist", "FLOATING: Trip completed: $completedTrip")
+            android.util.Log.d("BoltAssist", "FLOATING: Cache size after trip: ${TripManager.tripsCache.size}")
             isRecording = false
+            // Reset earnings for next trip
+            earnings = 0
+            // Update display if expanded view is open
+            moneyDisplay?.text = "${earnings / 10.0} PLN"
         } else {
             // Start recording
-            android.util.Log.d("BoltAssist", "Starting new trip with location: $currentLocation")
+            android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation")
             val startedTrip = TripManager.startTrip(currentLocation)
-            android.util.Log.d("BoltAssist", "Trip started: $startedTrip")
+            android.util.Log.d("BoltAssist", "FLOATING: Trip started: $startedTrip")
             isRecording = true
         }
     }

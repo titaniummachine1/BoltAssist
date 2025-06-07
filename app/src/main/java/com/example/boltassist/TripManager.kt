@@ -11,6 +11,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import kotlinx.coroutines.*
 
 data class TripData(
     val id: String = UUID.randomUUID().toString(),
@@ -46,7 +47,7 @@ object TripManager {
         if (!::context.isInitialized) {
             context = appContext.applicationContext
             android.util.Log.d("BoltAssist", "TripManager singleton initialized")
-            // Try to load existing trips immediately on first initialization
+            // Load existing trips from files
             tryLoadExistingTrips()
         }
     }
@@ -59,6 +60,19 @@ object TripManager {
         if (defaultDir.exists() && File(defaultDir, "trips_database.json").exists()) {
             setStorageDirectory(defaultDir)
             android.util.Log.d("BoltAssist", "Auto-loaded existing trips from default directory")
+        }
+        
+        // Also check for SAF saved path
+        val prefs = context.getSharedPreferences("BoltAssist", Context.MODE_PRIVATE)
+        val savedPath = prefs.getString("storage_path", null)
+        if (savedPath != null) {
+            try {
+                val uri = Uri.parse(savedPath)
+                setStorageDirectoryUri(uri)
+                android.util.Log.d("BoltAssist", "Auto-loaded existing trips from SAF: $uri")
+            } catch (e: Exception) {
+                android.util.Log.e("BoltAssist", "Failed to auto-load from SAF", e)
+            }
         }
     }
     
@@ -114,6 +128,13 @@ object TripManager {
             endStreet = getStreetFromLocation(location) // TODO: Implement OSM reverse geocoding
         )
         
+        android.util.Log.d("BoltAssist", "REAL TRIP CREATED:")
+        android.util.Log.d("BoltAssist", "  Start: ${completedTrip.startTime}")
+        android.util.Log.d("BoltAssist", "  End: ${completedTrip.endTime}")
+        android.util.Log.d("BoltAssist", "  Duration: ${completedTrip.durationMinutes} minutes")
+        android.util.Log.d("BoltAssist", "  Earnings: ${completedTrip.earningsPLN} PLN")
+        android.util.Log.d("BoltAssist", "  ID: ${completedTrip.id}")
+        
         saveTripToFile(completedTrip)
         currentTrip = null
         
@@ -135,16 +156,17 @@ object TripManager {
     
     private fun saveTripToFile(trip: TripData) {
         android.util.Log.d("BoltAssist", "Adding trip to cache. Before: ${_tripsCache.size}")
-        // Add to in-memory cache for UI
+        // Add to in-memory cache for UI (immediate real-time update)
         _tripsCache.add(trip)
         android.util.Log.d("BoltAssist", "Trip added to cache. After: ${_tripsCache.size}")
-        // Save immediately after each trip (File or SAF)
+        
+        // Save immediately to files for persistence (real-time sync)
         if (storageTreeUri != null) {
             saveTripsToUri()
-        } else {
+        } else if (storageDirectory != null) {
             saveAllTripsToFile()
         }
-        android.util.Log.d("BoltAssist", "Trip saved to cache and file: $trip")
+        android.util.Log.d("BoltAssist", "Trip saved to cache and files: $trip")
     }
     
     private fun saveAllTripsToFile() {
@@ -216,7 +238,12 @@ object TripManager {
             android.util.Log.d("BoltAssist", "Added test trip: $trip")
         }
         
-        saveAllTripsToFile()
+        // Save all test data to files
+        if (storageTreeUri != null) {
+            saveTripsToUri()
+        } else if (storageDirectory != null) {
+            saveAllTripsToFile()
+        }
         android.util.Log.d("BoltAssist", "Test data generated and saved!")
     }
     
@@ -259,22 +286,25 @@ object TripManager {
     
     fun isRecording(): Boolean = currentTrip != null
     
-    // Get earnings data for the weekly grid
-    fun getWeeklyEarningsGrid(): Array<Array<GridCellData>> {
-        val grid = Array(7) { Array(24) { GridCellData() } }
+    // Simple grid data - total revenue per hour for the week
+    fun getWeeklyGrid(): Array<DoubleArray> {
+        val grid = Array(7) { DoubleArray(24) { 0.0 } } // [day][hour] = total revenue
         val trips = getAllTrips()
-        android.util.Log.d("BoltAssist", "Building grid with ${trips.size} trips")
+        
+        android.util.Log.d("BoltAssist", "Building simple grid with ${trips.size} trips")
         
         trips.forEach { trip ->
+            android.util.Log.d("BoltAssist", "Processing trip for grid: ID=${trip.id}, Start=${trip.startTime}, End=${trip.endTime}, Earnings=${trip.earningsPLN}")
+            
             if (trip.endTime != null && trip.durationMinutes > 0) {
-                val calendar = Calendar.getInstance()
                 try {
                     val startDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
+                    val calendar = Calendar.getInstance()
                     calendar.time = startDate ?: return@forEach
                     
-                    val dayOfWeek = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                    val day = when (calendar.get(Calendar.DAY_OF_WEEK)) {
                         Calendar.MONDAY -> 0
-                        Calendar.TUESDAY -> 1
+                        Calendar.TUESDAY -> 1  
                         Calendar.WEDNESDAY -> 2
                         Calendar.THURSDAY -> 3
                         Calendar.FRIDAY -> 4
@@ -284,28 +314,29 @@ object TripManager {
                     }
                     val hour = calendar.get(Calendar.HOUR_OF_DAY)
                     
-                    if (dayOfWeek in 0..6 && hour in 0..23) {
-                        val cellData = grid[dayOfWeek][hour]
-                        cellData.tripCount++
-                        cellData.totalEarnings += trip.earningsPLN
-                        cellData.totalMinutes += trip.durationMinutes
-                    }
+                    // Add total earnings to grid (sum all trips in same hour)
+                    grid[day][hour] += trip.earningsPLN.toDouble()
+                    
+                    android.util.Log.d("BoltAssist", "SUCCESS: Trip ${trip.id} -> Day=$day, Hour=$hour, Earnings=${trip.earningsPLN} PLN")
+                    android.util.Log.d("BoltAssist", "Grid[$day][$hour] now = ${grid[day][hour]} PLN total")
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    android.util.Log.e("BoltAssist", "ERROR processing trip: $trip", e)
                 }
+            } else {
+                android.util.Log.w("BoltAssist", "SKIPPING trip: endTime=${trip.endTime}, duration=${trip.durationMinutes}")
             }
         }
         
         return grid
     }
     
-    // Get current time slot for highlighting
-    fun getCurrentTimeSlot(): Pair<Int, Int> {
+    // Get current time for highlighting  
+    fun getCurrentTime(): Pair<Int, Int> {
         val calendar = Calendar.getInstance()
-        val dayOfWeek = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+        val day = when (calendar.get(Calendar.DAY_OF_WEEK)) {
             Calendar.MONDAY -> 0
             Calendar.TUESDAY -> 1
-            Calendar.WEDNESDAY -> 2
+            Calendar.WEDNESDAY -> 2  
             Calendar.THURSDAY -> 3
             Calendar.FRIDAY -> 4
             Calendar.SATURDAY -> 5
@@ -313,7 +344,7 @@ object TripManager {
             else -> 0
         }
         val hour = calendar.get(Calendar.HOUR_OF_DAY)
-        return Pair(dayOfWeek, hour)
+        return Pair(day, hour)
     }
     
     /**
@@ -375,68 +406,4 @@ object TripManager {
     }
 }
 
-data class GridCellData(
-    var tripCount: Int = 0,
-    var totalEarnings: Int = 0, // In PLN
-    var totalMinutes: Int = 0
-) {
-    fun getHourlyEarnings(): Double {
-        return if (totalMinutes > 0) {
-            (totalEarnings.toDouble() / totalMinutes) * 60.0
-        } else 0.0
-    }
-    
-    fun hasEnoughData(): Boolean = tripCount >= 2
-    
-    fun getPerformanceColor(): android.graphics.Color {
-        if (!hasEnoughData()) return android.graphics.Color.valueOf(0f, 0f, 0f) // Black
-        
-        val hourlyEarnings = getHourlyEarnings()
-        // Define performance thresholds (PLN per hour) - adjusted for Bolt driver reality
-        val poorEarnings = 8.0    // Red - Poor
-        val decentEarnings = 25.0 // Yellow - Decent
-        val goodEarnings = 45.0   // Green - Good
-        val legendaryEarnings = 80.0 // Gold - Legendary (events/surge)
-        
-        return when {
-            hourlyEarnings >= legendaryEarnings -> {
-                // LEGENDARY - Bright Gold for exceptional event earnings
-                android.graphics.Color.valueOf(1f, 0.84f, 0f) // Pure Gold
-            }
-            hourlyEarnings >= goodEarnings -> {
-                // Good to Legendary gradient (Green to Gold)
-                val ratio = ((hourlyEarnings - goodEarnings) / (legendaryEarnings - goodEarnings)).coerceIn(0.0, 1.0).toFloat()
-                android.graphics.Color.valueOf(ratio, 1f, 0f) // Green to Gold
-            }
-            hourlyEarnings >= decentEarnings -> {
-                // Decent to Good (Yellow to Green)
-                val ratio = ((hourlyEarnings - decentEarnings) / (goodEarnings - decentEarnings)).coerceIn(0.0, 1.0).toFloat()
-                android.graphics.Color.valueOf(1f - ratio, 1f, 0f)
-            }
-            hourlyEarnings >= poorEarnings -> {
-                // Poor to Decent (Red to Yellow)
-                val ratio = ((hourlyEarnings - poorEarnings) / (decentEarnings - poorEarnings)).coerceIn(0.0, 1.0).toFloat()
-                android.graphics.Color.valueOf(1f, ratio, 0f)
-            }
-            else -> {
-                // Very Poor - Dark Red
-                android.graphics.Color.valueOf(0.5f, 0f, 0f)
-            }
-        }
-    }
-    
-    fun getPerformanceLevel(): String {
-        if (!hasEnoughData()) return "No Data"
-        
-        val hourlyEarnings = getHourlyEarnings()
-        return when {
-            hourlyEarnings >= 80.0 -> "LEGENDARY"
-            hourlyEarnings >= 45.0 -> "Good"
-            hourlyEarnings >= 25.0 -> "Decent"
-            hourlyEarnings >= 8.0 -> "Poor"
-            else -> "Very Poor"
-        }
-    }
-    
-    fun isLegendary(): Boolean = hasEnoughData() && getHourlyEarnings() >= 80.0
-} 
+ 
