@@ -1,27 +1,48 @@
 package com.example.boltassist
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.boltassist.ui.theme.BoltAssistTheme
+import java.io.File
 
 class MainActivity : ComponentActivity() {
+    private var onFolderSelected: ((String) -> Unit)? = null
+    
+    private val directoryPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri?.let {
+            // Take persistable permission
+            contentResolver.takePersistableUriPermission(
+                it,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            
+            // Convert URI to display path
+            val path = it.toString()
+            onFolderSelected?.invoke(path)
+        }
+    }
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -30,7 +51,10 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    WeekGrid()
+                    WeekGrid { callback ->
+                        onFolderSelected = callback
+                        directoryPickerLauncher.launch(null)
+                    }
                 }
             }
         }
@@ -38,10 +62,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun WeekGrid() {
+fun WeekGrid(onFolderPickerRequest: ((String) -> Unit) -> Unit) {
     var isRecording by remember { mutableStateOf(false) }
     var currentEarnings by remember { mutableStateOf(0) }
     var selectedFolder by remember { mutableStateOf("Not Selected") }
+    var selectedFolderPath by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val tripManager = remember { TripManager(context) }
     
     Column(
         modifier = Modifier
@@ -90,7 +117,21 @@ fun WeekGrid() {
             onEarningsChange = { change -> 
                 currentEarnings = (currentEarnings + change).coerceAtLeast(0)
             },
-            onFolderSelect = { selectedFolder = "Folder Selected" }
+            onFolderSelect = { 
+                onFolderPickerRequest { folderPath ->
+                    selectedFolderPath = folderPath
+                    selectedFolder = "Selected"
+                    // Set up storage directory for trip manager
+                    try {
+                        val externalDir = File(context.getExternalFilesDir(null), "BoltAssist")
+                        tripManager.setStorageDirectory(externalDir)
+                    } catch (e: Exception) {
+                        // Fallback to internal storage
+                        val internalDir = File(context.filesDir, "BoltAssist")
+                        tripManager.setStorageDirectory(internalDir)
+                    }
+                }
+            }
         )
     }
 }
@@ -189,12 +230,11 @@ fun TripControls(
             ),
             modifier = Modifier.size(120.dp, 48.dp)
         ) {
-            Icon(
-                imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.PlayArrow,
-                contentDescription = null
+            Text(
+                text = if (isRecording) "■ STOP" else "▶ START",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(if (isRecording) "STOP" else "START")
         }
     }
 }
@@ -203,7 +243,7 @@ fun TripControls(
 @Composable
 fun DefaultPreview() {
     BoltAssistTheme {
-        WeekGrid()
+        WeekGrid { }
     }
 }
 
