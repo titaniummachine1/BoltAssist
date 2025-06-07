@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.location.Location
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
@@ -27,14 +28,13 @@ class FloatingWindowService : Service() {
     private var isExpanded = false
     private var earnings = 0
     private var isRecording = false
-    private lateinit var tripManager: TripManager
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var currentLocation: Location? = null
     
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        tripManager = TripManager(this)
+        TripManager.initialize(this)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         
         startLocationUpdates()
@@ -42,19 +42,18 @@ class FloatingWindowService : Service() {
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Set up storage directory from intent or use default
         val storagePathFromIntent = intent?.getStringExtra("storage_path")
-        val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist") 
-            ?: filesDir.resolve("BoltAssist")
-        
         if (storagePathFromIntent != null) {
-            // Use custom storage path if provided
-            // For now, use default directory but log the custom path
-            android.util.Log.d("BoltAssist", "Custom storage path: $storagePathFromIntent")
+            // Use SAF tree URI for storage
+            val uri = Uri.parse(storagePathFromIntent)
+            TripManager.setStorageDirectoryUri(uri)
+            android.util.Log.d("BoltAssist", "Using SAF storage URI: $uri")
+        } else {
+            // Fallback to default app-private directory
+            val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist")
+                ?: filesDir.resolve("BoltAssist")
+            TripManager.setStorageDirectory(defaultDir)
         }
-        
-        tripManager.setStorageDirectory(defaultDir)
-        
         return START_STICKY
     }
     
@@ -279,13 +278,13 @@ class FloatingWindowService : Service() {
         if (isRecording) {
             // Stop recording
             android.util.Log.d("BoltAssist", "Stopping trip with earnings: ${earnings / 10} PLN")
-            val completedTrip = tripManager.stopTrip(currentLocation, earnings / 10) // Convert back to PLN
+            val completedTrip = TripManager.stopTrip(currentLocation, earnings / 10) // Convert back to PLN
             android.util.Log.d("BoltAssist", "Trip saved: $completedTrip")
             isRecording = false
         } else {
             // Start recording
             android.util.Log.d("BoltAssist", "Starting new trip with location: $currentLocation")
-            val startedTrip = tripManager.startTrip(currentLocation)
+            val startedTrip = TripManager.startTrip(currentLocation)
             android.util.Log.d("BoltAssist", "Trip started: $startedTrip")
             isRecording = true
         }

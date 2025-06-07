@@ -11,12 +11,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import kotlinx.coroutines.delay
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -27,6 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.boltassist.ui.theme.BoltAssistTheme
 import java.io.File
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Box
 
 class MainActivity : ComponentActivity() {
     private var onFolderSelected: ((String) -> Unit)? = null
@@ -92,8 +97,8 @@ class MainActivity : ComponentActivity() {
             Settings.canDrawOverlays(this)
         } else {
             true
+            }
         }
-    }
     
     private fun requestOverlayPermissionAndStart() {
         if (canDrawOverlays()) {
@@ -115,7 +120,6 @@ class MainActivity : ComponentActivity() {
         }
         
         startService(intent)
-        finish() // Close main activity
     }
 }
 
@@ -125,159 +129,100 @@ fun MainScreen(
     onFolderSelect: ((String) -> Unit) -> Unit,
     savedStoragePath: String?
 ) {
-    var selectedFolder by remember { 
-        mutableStateOf(if (savedStoragePath != null) "Selected" else "Not Selected") 
-    }
     val context = LocalContext.current
-    val tripManager = remember { TripManager(context) }
     
-    // Set up default storage
+    // Initialize singleton TripManager
     LaunchedEffect(Unit) {
-        val defaultDir = context.getExternalFilesDir(null)?.resolve("BoltAssist") 
-            ?: context.filesDir.resolve("BoltAssist")
-        tripManager.setStorageDirectory(defaultDir)
+        TripManager.initialize(context)
     }
     
+    // Storage path display state
+    var displayPath by remember { mutableStateOf("Default App Directory") }
+
+    // Set storage directory based on selection or default
+    LaunchedEffect(savedStoragePath) {
+        TripManager.initialize(context)
+        if (savedStoragePath != null) {
+            TripManager.setStorageDirectoryUri(Uri.parse(savedStoragePath))
+            displayPath = "Selected: ${Uri.parse(savedStoragePath).lastPathSegment}"
+        } else {
+            val defaultDir = context.getExternalFilesDir(null)?.resolve("BoltAssist")
+                ?: context.filesDir.resolve("BoltAssist")
+            TripManager.setStorageDirectory(defaultDir)
+            displayPath = "Default App Directory"
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(8.dp)
     ) {
-        // 7 rows (days) x 24 columns (hourly slots)
-        WeeklyEarningsGrid(tripManager = tripManager)
-        
+        // Storage status display
+        Text(
+            text = "Storage: $displayPath",
+            fontSize = 12.sp,
+            color = Color.Gray,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        // Grid
+        Box(modifier = Modifier.weight(1f)) {
+            WeeklyEarningsGrid()
+        }
         Spacer(modifier = Modifier.height(8.dp))
-        
         // Legend
-        Column {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                LegendItem(color = Color.Black, label = "No Data")
-                LegendItem(color = Color(0.5f, 0f, 0f), label = "Very Poor (<8)")
-                LegendItem(color = Color.Red, label = "Poor (8-25)")
-                LegendItem(color = Color.Yellow, label = "Decent (25-45)")
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                LegendItem(color = Color.Green, label = "Good (45-80)")
-                LegendItem(
-                    color = Color(1f, 0.84f, 0f), 
-                    label = "LEGENDARY (80+)", 
-                    isSpecial = true
-                )
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            LegendItem(color = Color.Black, label = "No Data")
+            LegendItem(color = Color.Red, label = "Poor (<8)")
+            LegendItem(color = Color.Yellow, label = "Decent (8-25)")
+            LegendItem(color = Color.Green, label = "Good (25-45)")
+            LegendItem(color = Color(1f,0.65f,0f), label = "Legendary (45+)", isSpecial = true)
         }
-        
         Spacer(modifier = Modifier.height(8.dp))
-        
-        // Setup Controls - Moved to scrollable area
-        LazyColumn(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxWidth()
+        // Buttons
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            item {
-                // Folder Selection
-                Button(
-                    onClick = { 
-                        onFolderSelect { folderPath ->
-                            selectedFolder = "Selected"
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selectedFolder == "Not Selected") Color.Gray else Color.Blue
-                    )
-                ) {
-                    Text("Select Storage Folder: $selectedFolder")
+            Button(onClick = {
+                onFolderSelect { newUri ->
+                    TripManager.setStorageDirectoryUri(Uri.parse(newUri))
+                    displayPath = "Selected: ${Uri.parse(newUri).lastPathSegment}"
                 }
+            }) {
+                Text("Select Directory")
             }
-            
-            item {
-                // Start Floating Assistant - Simple Button
-                Button(
-                    onClick = onStartFloatingWindow,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.Green
-                    ),
-                    modifier = Modifier.height(50.dp)
-                ) {
-                    Text(
-                        text = "Begin Drive Assistant",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-            
-            item {
-                // Important: Overlay Permission Notice
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.Yellow.copy(alpha = 0.3f))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "⚠️ Grant overlay permission when prompted",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Red
-                        )
-                        Text(
-                            text = "Creates draggable floating 'Help' button for trip recording",
-                            fontSize = 12.sp,
-                            color = Color.Black
-                        )
-                    }
-                }
-            }
-            
-            item {
-                // Debug: Manual refresh button
-                Button(
-                    onClick = { 
-                        refreshCounter++ // Trigger immediate refresh
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
-                ) {
-                    Text("🔄 Refresh Data (Debug)")
-                }
+            Button(onClick = onStartFloatingWindow, modifier = Modifier.weight(1f)) {
+                Text("Begin")
             }
         }
+        Spacer(modifier = Modifier.height(4.dp))
     }
 }
 
 @Composable
-fun WeeklyEarningsGrid(tripManager: TripManager) {
-    var gridData by remember { mutableStateOf(tripManager.getWeeklyEarningsGrid()) }
-    var refreshCounter by remember { mutableStateOf(0) }
-    val currentTimeSlot = tripManager.getCurrentTimeSlot()
+fun WeeklyEarningsGrid() {
+    // Subscribe to tripsCache for live updates
+    val trips = TripManager.tripsCache
+    // Direct calculation triggers recomposition when tripsCache changes
+    val gridData = TripManager.getWeeklyEarningsGrid()
+    val currentTimeSlot = TripManager.getCurrentTimeSlot()
     
-    // Immediate refresh when component loads and every 10 seconds for debugging
-    LaunchedEffect(refreshCounter) {
-        tripManager.reloadFromFile() // Reload trips from file to pick up changes from FloatingWindowService
-        gridData = tripManager.getWeeklyEarningsGrid()
+    // Debug logging
+    LaunchedEffect(trips.size) {
+        android.util.Log.d("BoltAssist", "Grid recomposing with ${trips.size} trips")
     }
-    
-    // Auto-refresh every 3 seconds for debugging + manual refresh capability
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(3000) // 3 seconds for debugging (was 10 seconds)
-            refreshCounter++
-        }
-    }
-    
+
     Column(
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         repeat(7) { dayIndex ->
             Row(
-                horizontalArrangement = Arrangement.spacedBy(1.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 repeat(24) { hourIndex ->
                     GridCell(
@@ -379,15 +324,13 @@ fun LegendItem(color: Color, label: String, isSpecial: Boolean = false) {
     }
 }
 
-
-
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
     BoltAssistTheme {
         MainScreen(
-            onStartFloatingWindow = { },
-            onFolderSelect = { },
+            onStartFloatingWindow = {},
+            onFolderSelect = { _ -> },
             savedStoragePath = null
         )
     }
