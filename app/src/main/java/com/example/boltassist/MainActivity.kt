@@ -324,7 +324,7 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
     // Get live grid data
     val trips = TripManager.tripsCache
     val actualGrid = TripManager.getWeeklyGrid()
-    val kalmanGrid = TripManager.getKalmanPredictionGrid()
+    val kalmanGrid = TripDataManager.getAdvancedPredictionGrid()
     // Track system time to update highlight immediately and every 2 seconds for responsiveness
     var currentTime by remember { mutableStateOf(TripManager.getCurrentTime()) }
     LaunchedEffect(Unit) {
@@ -422,39 +422,27 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                         val currentDay = currentTime.first
                         val currentHour = currentTime.second
                         
-                                                    val value = if (day == currentDay) {
-                                // Current day: past/current hours show actual, future hours show predictions
-                                // Convert hour index back to actual hour for comparison
-                                val actualHourForComparison = (hour + 1) % 24
-                                if (actualHourForComparison <= currentHour) {
-                                    // Past and current hours of today: show actual earnings
-                                    if (actualGrid[day][hour] > 0.0) {
-                                        actualGrid[day][hour]
-                                    } else {
-                                        0.0 // No actual data - black cell
-                                    }
-                                                                } else {
-                                    // Future hours of today: show predictions
-                                    if (kalmanGrid[day][hour] >= 0.1) {
-                                        kalmanGrid[day][hour] // Prediction for upcoming hours
-                                    } else {
-                                        0.0 // No prediction - black cell
-                                    }
-                                }
-                            } else {
-                                // Past days and future days: always show predictions from historical data
-                                if (kalmanGrid[day][hour] >= 0.1) {
-                                    kalmanGrid[day][hour] // Historical predictions
-                                } else {
-                                    0.0 // No prediction - black cell
-                                }
-                            }
+                                                    // Simple DRY logic: Always show actual data if it exists, otherwise show predictions
+                        val value = if (actualGrid[day][hour] > 0.0) {
+                            // Has actual trip data - show it regardless of day/time
+                            actualGrid[day][hour]
+                        } else if (kalmanGrid[day][hour] >= 0.1) {
+                            // No actual data but has prediction - show prediction
+                            kalmanGrid[day][hour]
+                        } else {
+                            // No data at all - black cell
+                            0.0
+                        }
                             SimpleGridCell(
                                 earnings = value,
                                 isCurrentTime = isCurrent,
                                 editMode = editMode,
                                 onEditClick = { add5PLN -> 
-                                    TripManager.editCell(day, hour, add5PLN)
+                                    if (add5PLN) {
+                                        TripDataManager.addTripForDayHour(day, hour, 5)
+                                    } else {
+                                        TripDataManager.clearTripsForDayHour(day, hour)
+                                    }
                                 }
                             )
                     }
@@ -518,39 +506,27 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                             val currentDay = currentTime.first
                             val currentHour = currentTime.second
                             
-                            val value = if (day == currentDay) {
-                                // Current day: past/current hours show actual, future hours show predictions
-                                // Convert hour index back to actual hour for comparison
-                                val actualHourForComparison = (hour + 1) % 24
-                                if (actualHourForComparison <= currentHour) {
-                                    // Past and current hours of today: show actual earnings
-                                    if (actualGrid[day][hour] > 0.0) {
-                                        actualGrid[day][hour]
-                                    } else {
-                                        0.0 // No actual data - black cell
-                                    }
-                                } else {
-                                    // Future hours of today: show predictions
-                                    if (kalmanGrid[day][hour] >= 0.1) {
-                                        kalmanGrid[day][hour] // Prediction for upcoming hours
-                                    } else {
-                                        0.0 // No prediction - black cell
-                                    }
-                                }
+                            // Simple DRY logic: Always show actual data if it exists, otherwise show predictions
+                            val value = if (actualGrid[day][hour] > 0.0) {
+                                // Has actual trip data - show it regardless of day/time
+                                actualGrid[day][hour]
+                            } else if (kalmanGrid[day][hour] >= 0.1) {
+                                // No actual data but has prediction - show prediction
+                                kalmanGrid[day][hour]
                             } else {
-                                // Past days and future days: always show predictions from historical data
-                                if (kalmanGrid[day][hour] >= 0.1) {
-                                    kalmanGrid[day][hour] // Historical predictions
-                                } else {
-                                    0.0 // No prediction - black cell
-                                }
+                                // No data at all - black cell
+                                0.0
                             }
                             SimpleGridCell(
                                 earnings = value,
                                 isCurrentTime = isCurrent,
                                 editMode = editMode,
                                 onEditClick = { add5PLN -> 
-                                    TripManager.editCell(day, hour, add5PLN)
+                                    if (add5PLN) {
+                                        TripDataManager.addTripForDayHour(day, hour, 5)
+                                    } else {
+                                        TripDataManager.clearTripsForDayHour(day, hour)
+                                    }
                                 }
                             )
                         }

@@ -48,18 +48,8 @@ class FloatingWindowService : Service() {
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val storagePathFromIntent = intent?.getStringExtra("storage_path")
-        if (storagePathFromIntent != null) {
-            // Use SAF tree URI for storage
-            val uri = Uri.parse(storagePathFromIntent)
-            TripManager.setStorageDirectoryUri(uri)
-            android.util.Log.d("BoltAssist", "Using SAF storage URI: $uri")
-        } else {
-            // Fallback to default app-private directory
-            val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist")
-                ?: filesDir.resolve("BoltAssist")
-            TripManager.setStorageDirectory(defaultDir)
-        }
+        // DON'T reload from storage - preserve edit mode data in memory
+        android.util.Log.d("BoltAssist", "FloatingWindow started - preserving ${TripManager.tripsCache.size} trips in memory")
         return START_STICKY
     }
     
