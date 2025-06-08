@@ -54,9 +54,9 @@ class FloatingWindowService : Service() {
     }
     
     private fun createFloatingWindow() {
-        // Create the larger floating button with "Help" text
+        // Create the larger floating button with "Trip" text
         floatingView = TextView(this).apply {
-            text = "Help"
+            text = "Trip"
             textSize = 14f
             setTextColor(ContextCompat.getColor(this@FloatingWindowService, android.R.color.white))
             setBackgroundColor(ContextCompat.getColor(this@FloatingWindowService, android.R.color.holo_blue_dark))
@@ -219,6 +219,11 @@ class FloatingWindowService : Service() {
             )
         )
         
+        // Position the menu next to the floating button, closer to screen center
+        val floatingParams = floatingView?.layoutParams as? WindowManager.LayoutParams
+        val screenWidth = resources.displayMetrics.widthPixels
+        val screenHeight = resources.displayMetrics.heightPixels
+        
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -230,7 +235,39 @@ class FloatingWindowService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER
+            gravity = Gravity.TOP or Gravity.START
+            
+            // Position menu next to floating button, on the side closer to screen center
+            if (floatingParams != null) {
+                val floatingX = floatingParams.x
+                val floatingY = floatingParams.y
+                val floatingWidth = 100 // floating button width
+                
+                // Determine which side is closer to center
+                val distanceFromLeft = floatingX
+                val distanceFromRight = screenWidth - (floatingX + floatingWidth)
+                
+                if (distanceFromLeft < distanceFromRight) {
+                    // Floating button is on left side, show menu to the right
+                    x = floatingX + floatingWidth + 10
+                } else {
+                    // Floating button is on right side, show menu to the left
+                    x = floatingX - 250 // approximate menu width
+                }
+                
+                // Align vertically with floating button
+                y = floatingY
+                
+                // Ensure menu doesn't go off screen
+                if (x < 0) x = 10
+                if (x + 250 > screenWidth) x = screenWidth - 260
+                if (y < 0) y = 10
+                if (y + 200 > screenHeight) y = screenHeight - 210
+            } else {
+                // Fallback positioning if floating button params not available
+                x = screenWidth / 2 - 125
+                y = screenHeight / 2 - 100
+            }
         }
         
         expandedView = layout
