@@ -19,7 +19,7 @@ data class TripData(
     val id: String = UUID.randomUUID().toString(),
     val startTime: String,
     val endTime: String? = null,
-image.png    val durationMinutes: Int = 0,
+    val durationMinutes: Int = 0,
     val startStreet: String = "Unknown",
     val endStreet: String = "Unknown",
     val earningsPLN: Int = 0,
@@ -535,6 +535,159 @@ object TripManager {
     
     fun isRecording(): Boolean = currentTrip != null
     
+    /**
+     * Reset database for debugging - clears all trips and saves empty file
+     */
+    fun resetDatabase() {
+        android.util.Log.d("BoltAssist", "RESET: Clearing all trip data")
+        
+        // Clear in-memory cache
+        _tripsCache.clear()
+        
+        // Reset Kalman filter states
+        kalmanInitialized = false
+        for (day in 0..6) {
+            for (hour in 0..23) {
+                kalmanStates[day][hour] = KalmanState()
+            }
+        }
+        
+        // Save empty database to file
+        try {
+            if (storageTreeUri != null) {
+                saveTripsToUri()
+                android.util.Log.d("BoltAssist", "RESET: Cleared SAF database")
+            } else if (storageDirectory != null) {
+                saveAllTripsToFile()
+                android.util.Log.d("BoltAssist", "RESET: Cleared file database")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "RESET: Failed to save empty database", e)
+        }
+        
+        android.util.Log.d("BoltAssist", "RESET: Database cleared, cache size: ${_tripsCache.size}")
+    }
+    
+    /**
+     * Edit mode: Add 5 PLN to a specific day/hour or clear it
+     */
+    fun editCell(day: Int, hour: Int, add5PLN: Boolean) {
+        android.util.Log.d("BoltAssist", "EDIT: Day=$day Hour=$hour Add5PLN=$add5PLN")
+        
+        if (add5PLN) {
+            // Add 5 PLN - create a fake trip for this day/hour
+            val targetDate = getDateForDayHour(day, hour)
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+            val startTime = dateFormat.format(targetDate)
+            
+            // Add 5 minutes for fake trip duration
+            val calendar = Calendar.getInstance()
+            calendar.time = targetDate
+            calendar.add(Calendar.MINUTE, 5)
+            val endTime = dateFormat.format(calendar.time)
+            
+            val editTrip = TripData(
+                id = "edit_${System.currentTimeMillis()}",
+                startTime = startTime,
+                endTime = endTime,
+                durationMinutes = 5,
+                earningsPLN = 5,
+                startLocation = LocationData(52.2297, 21.0122), // Warsaw center
+                endLocation = LocationData(52.2297, 21.0122),
+                startStreet = "Edit Mode",
+                endStreet = "Edit Mode"
+            )
+            
+            _tripsCache.add(editTrip)
+            android.util.Log.d("BoltAssist", "EDIT: Added 5 PLN trip to Day=$day Hour=$hour")
+        } else {
+            // Clear - remove all trips for this day/hour
+            val targetDate = getDateForDayHour(day, hour)
+            val calendar = Calendar.getInstance()
+            calendar.time = targetDate
+            val targetHour = calendar.get(Calendar.HOUR_OF_DAY)
+            val targetDay = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.MONDAY -> 0
+                Calendar.TUESDAY -> 1
+                Calendar.WEDNESDAY -> 2
+                Calendar.THURSDAY -> 3
+                Calendar.FRIDAY -> 4
+                Calendar.SATURDAY -> 5
+                Calendar.SUNDAY -> 6
+                else -> 0
+            }
+            
+            val tripsToRemove = _tripsCache.filter { trip ->
+                try {
+                    val tripDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
+                    if (tripDate != null) {
+                        calendar.time = tripDate
+                        val tripDay = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                            Calendar.MONDAY -> 0
+                            Calendar.TUESDAY -> 1
+                            Calendar.WEDNESDAY -> 2
+                            Calendar.THURSDAY -> 3
+                            Calendar.FRIDAY -> 4
+                            Calendar.SATURDAY -> 5
+                            Calendar.SUNDAY -> 6
+                            else -> 0
+                        }
+                        val tripHour = calendar.get(Calendar.HOUR_OF_DAY)
+                        tripDay == targetDay && tripHour == targetHour
+                    } else false
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            
+            _tripsCache.removeAll(tripsToRemove)
+            android.util.Log.d("BoltAssist", "EDIT: Cleared ${tripsToRemove.size} trips from Day=$day Hour=$hour")
+        }
+        
+        // Save changes immediately
+        try {
+            if (storageTreeUri != null) {
+                saveTripsToUri()
+            } else if (storageDirectory != null) {
+                saveAllTripsToFile()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "EDIT: Failed to save changes", e)
+        }
+    }
+    
+    /**
+     * Get the date for a specific day/hour in current week
+     */
+    private fun getDateForDayHour(day: Int, hour: Int): Date {
+        val calendar = Calendar.getInstance()
+        
+        // Get to Monday of current week
+        val currentDayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
+        val daysFromMonday = when (currentDayOfWeek) {
+            Calendar.MONDAY -> 0
+            Calendar.TUESDAY -> 1
+            Calendar.WEDNESDAY -> 2
+            Calendar.THURSDAY -> 3
+            Calendar.FRIDAY -> 4
+            Calendar.SATURDAY -> 5
+            Calendar.SUNDAY -> 6
+            else -> 0
+        }
+        calendar.add(Calendar.DAY_OF_YEAR, -daysFromMonday)
+        
+        // Go to target day
+        calendar.add(Calendar.DAY_OF_YEAR, day)
+        
+        // Set target hour
+        calendar.set(Calendar.HOUR_OF_DAY, hour + 1) // +1 because grid hours are 1-24, not 0-23
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        
+        return calendar.time
+    }
+    
     // Simple grid data - total revenue per hour for the week
     fun getWeeklyGrid(): Array<DoubleArray> {
         val grid = Array(7) { DoubleArray(24) { 0.0 } } // [day][hour] = total revenue
@@ -594,7 +747,8 @@ object TripManager {
             else -> 0
         }
         val hour = calendar.get(Calendar.HOUR_OF_DAY)
-        android.util.Log.d("BoltAssist", "Current time: Day=$day, Hour=$hour (${calendar.time})")
+        val dayName = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[day]
+        android.util.Log.d("BoltAssist", "Current time: Day=$day ($dayName), Hour=$hour (${calendar.time})")
         return Pair(day, hour)
     }
     
@@ -760,12 +914,14 @@ object TripManager {
         val trips = getAllTrips()
         val calendar = Calendar.getInstance()
         val currentWeek = calendar.get(Calendar.WEEK_OF_YEAR)
+        val currentYear = calendar.get(Calendar.YEAR)
         
         // Get today's holiday tag for context-aware predictions
         val today = calendar.time
         val todayTag = getDayTag(today)
         
-        android.util.Log.d("BoltAssist", "Kalman predictions with holiday context: todayTag='$todayTag'")
+        android.util.Log.d("BoltAssist", "Kalman predictions - currentWeek=$currentWeek, currentYear=$currentYear, todayTag='$todayTag'")
+        android.util.Log.d("BoltAssist", "Processing ${trips.size} trips for predictions")
         
         // For each day/hour slot, find historical data with matching holiday context
         for (day in 0..6) {
@@ -779,9 +935,13 @@ object TripManager {
                         if (tripDate != null) {
                             calendar.time = tripDate
                             val tripWeek = calendar.get(Calendar.WEEK_OF_YEAR)
+                            val tripYear = calendar.get(Calendar.YEAR)
                             
-                            // Only use data from previous weeks (not current week)
-                            if (tripWeek != currentWeek) {
+                                        // Use data from previous weeks AND current week (for testing/immediate feedback)
+            // In production, you'd want to exclude current week for proper predictions
+            val isPreviousWeek = tripYear < currentYear || (tripYear == currentYear && tripWeek <= currentWeek)
+                            
+                            if (isPreviousWeek) {
                                 val tripDay = when (calendar.get(Calendar.DAY_OF_WEEK)) {
                                     Calendar.MONDAY -> 0
                                     Calendar.TUESDAY -> 1  
@@ -799,18 +959,20 @@ object TripManager {
                                 if (tripDay == day && tripHourIndex == hour) {
                                     val tripTag = getDayTag(tripDate)
                                     
-                                    // Holiday context matching:
+                                    // Holiday context matching - be more flexible:
                                     // - If today has no tag, use data from days with no tags
-                                    // - If today has a tag, use data from days with same tag
+                                    // - If today has a tag, prefer same tag but also accept no-tag data if no tag data exists
                                     val contextMatch = if (todayTag == null) {
                                         tripTag == null // Regular day - use regular day data
                                     } else {
-                                        tripTag == todayTag // Holiday - use same holiday data
+                                        tripTag == todayTag // Holiday - prefer same holiday data
                                     }
                                     
                                     if (contextMatch) {
                                         historicalEarnings.add(trip.earningsPLN.toDouble())
-                                        android.util.Log.d("BoltAssist", "Historical data: Day=$day Hour=$hour Tag='$tripTag' -> ${trip.earningsPLN} PLN")
+                                        android.util.Log.d("BoltAssist", "✓ MATCH: Day=$day Hour=$hour TripDate='${trip.startTime}' TripWeek=$tripWeek CurrentWeek=$currentWeek Tag='$tripTag' TodayTag='$todayTag' -> ${trip.earningsPLN} PLN")
+                                    } else {
+                                        android.util.Log.d("BoltAssist", "✗ No match: Day=$day Hour=$hour TripDate='${trip.startTime}' Tag='$tripTag' vs TodayTag='$todayTag'")
                                     }
                                 }
                             }
@@ -820,41 +982,150 @@ object TripManager {
                     }
                 }
                 
+                // If no exact holiday match and today is a holiday, also try regular day data
+                if (historicalEarnings.isEmpty() && todayTag != null) {
+                    trips.filter { it.endTime != null && it.earningsPLN > 0 }.forEach { trip ->
+                        try {
+                            val tripDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
+                            if (tripDate != null) {
+                                calendar.time = tripDate
+                                val tripWeek = calendar.get(Calendar.WEEK_OF_YEAR)
+                                val tripYear = calendar.get(Calendar.YEAR)
+                                
+                                val isPreviousWeek = tripYear < currentYear || (tripYear == currentYear && tripWeek <= currentWeek)
+                                
+                                if (isPreviousWeek) {
+                                    val tripDay = when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                                        Calendar.MONDAY -> 0
+                                        Calendar.TUESDAY -> 1  
+                                        Calendar.WEDNESDAY -> 2
+                                        Calendar.THURSDAY -> 3
+                                        Calendar.FRIDAY -> 4
+                                        Calendar.SATURDAY -> 5
+                                        Calendar.SUNDAY -> 6
+                                        else -> 0
+                                    }
+                                    val tripHour = calendar.get(Calendar.HOUR_OF_DAY)
+                                    val tripHourIndex = (tripHour - 1 + 24) % 24
+                                    
+                                    // Match day and hour, accept any non-holiday data as fallback
+                                    if (tripDay == day && tripHourIndex == hour) {
+                                        val tripTag = getDayTag(tripDate)
+                                        if (tripTag == null) { // Use regular day data as fallback
+                                            historicalEarnings.add(trip.earningsPLN.toDouble())
+                                            android.util.Log.d("BoltAssist", "✓ FALLBACK: Day=$day Hour=$hour TripDate='${trip.startTime}' TripWeek=$tripWeek CurrentWeek=$currentWeek Tag=null (fallback for TodayTag='$todayTag') -> ${trip.earningsPLN} PLN")
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("BoltAssist", "Error processing trip for fallback prediction: $trip", e)
+                        }
+                    }
+                }
+                
                 // Calculate prediction based on historical data
                 if (historicalEarnings.isNotEmpty()) {
-                    // Use average of historical data with some smart weighting
-                    val average = historicalEarnings.average()
-                    val prediction = when {
-                        historicalEarnings.size >= 3 -> average // Good data, use average
-                        historicalEarnings.size == 2 -> average * 0.9 // Medium confidence
-                        else -> average // Use exact value for single data point (time travel testing)
+                    // Tier 1: Exact matches - use direct Kalman filter
+                    val prediction = if (historicalEarnings.size >= 2) {
+                        // Enough data for basic Kalman filtering
+                        val kalmanState = kalmanStates[day][hour]
+                        var estimate = kalmanState.estimate
+                        
+                        // Update Kalman filter with each historical measurement
+                        historicalEarnings.forEach { measurement ->
+                            // Prediction step (no change since we're using historical data)
+                            val predictedEstimate = estimate
+                            val predictedError = kalmanState.errorCovariance + kalmanState.processNoise
+                            
+                            // Update step
+                            val kalmanGain = predictedError / (predictedError + kalmanState.measurementNoise)
+                            estimate = predictedEstimate + kalmanGain * (measurement - predictedEstimate)
+                            kalmanState.errorCovariance = (1 - kalmanGain) * predictedError
+                        }
+                        
+                        kalmanState.estimate = estimate
+                        estimate
+                    } else {
+                        // Single data point - use as direct prediction
+                        historicalEarnings.first()
                     }
                     
-                    grid[day][hour] = if (prediction >= 5.0) prediction else 0.0 // Minimum 5 PLN (single ride)
+                    grid[day][hour] = if (prediction >= 0.1) prediction else 0.0
+                    android.util.Log.d("BoltAssist", "TIER 1 PREDICTION: Day=$day Hour=$hour -> ${grid[day][hour]} PLN (from ${historicalEarnings.size} exact samples)")
                     
-                    if (grid[day][hour] > 0) {
-                        android.util.Log.d("BoltAssist", "Prediction: Day=$day Hour=$hour -> ${grid[day][hour]} PLN (from ${historicalEarnings.size} samples, tag='$todayTag')")
-                    }
                 } else {
-                    // No historical data - provide crude baseline predictions for common hours
-                    val crudeBaseline = when (hour) {
-                        in 6..9 -> 15.0   // Morning rush: 7-10 AM
-                        in 11..13 -> 20.0 // Lunch time: 12-2 PM  
-                        in 16..19 -> 25.0 // Evening rush: 5-8 PM
-                        in 20..22 -> 12.0 // Night: 9-11 PM
-                        else -> 0.0       // Other hours: no prediction
+                    // Tier 2: No exact matches - try broader fallback with Kalman
+                    val broaderEarnings = mutableListOf<Double>()
+                    
+                    // Collect earnings from ANY day/hour as fallback data
+                    trips.filter { it.endTime != null && it.earningsPLN > 0 }.forEach { trip ->
+                        try {
+                            val tripDate = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(trip.startTime)
+                            if (tripDate != null) {
+                                calendar.time = tripDate
+                                val tripWeek = calendar.get(Calendar.WEEK_OF_YEAR)
+                                val tripYear = calendar.get(Calendar.YEAR)
+                                
+                                val isPreviousWeek = tripYear < currentYear || (tripYear == currentYear && tripWeek <= currentWeek)
+                                
+                                if (isPreviousWeek) {
+                                    val tripTag = getDayTag(tripDate)
+                                    
+                                    // Holiday context matching (same as tier 1)
+                                    val contextMatch = if (todayTag == null) {
+                                        tripTag == null
+                                    } else {
+                                        tripTag == todayTag || tripTag == null // More permissive for fallback
+                                    }
+                                    
+                                    if (contextMatch) {
+                                        broaderEarnings.add(trip.earningsPLN.toDouble())
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Ignore parsing errors
+                        }
                     }
                     
-                    // Only show crude predictions for regular days (no holidays without data)
-                    grid[day][hour] = if (todayTag == null && crudeBaseline >= 5.0) crudeBaseline else 0.0
-                    
-                    if (grid[day][hour] > 0) {
-                        android.util.Log.d("BoltAssist", "Crude prediction: Day=$day Hour=$hour -> ${grid[day][hour]} PLN (baseline)")
+                    if (broaderEarnings.isNotEmpty()) {
+                        // Apply Kalman filter with broader dataset for rough estimates
+                        val kalmanState = kalmanStates[day][hour]
+                        var estimate = kalmanState.estimate
+                        
+                        // Use random sampling from broader data to avoid overfitting
+                        val sampleSize = minOf(5, broaderEarnings.size) // Max 5 samples for stability
+                        val sampledEarnings = broaderEarnings.shuffled().take(sampleSize)
+                        
+                        sampledEarnings.forEach { measurement ->
+                            // Prediction step
+                            val predictedEstimate = estimate
+                            val predictedError = kalmanState.errorCovariance + kalmanState.processNoise
+                            
+                            // Update step
+                            val kalmanGain = predictedError / (predictedError + kalmanState.measurementNoise)
+                            estimate = predictedEstimate + kalmanGain * (measurement - predictedEstimate)
+                            kalmanState.errorCovariance = (1 - kalmanGain) * predictedError
+                        }
+                        
+                        kalmanState.estimate = estimate
+                        // Apply confidence reduction for broader matches (85% confidence)
+                        val broadPrediction = estimate * 0.85
+                        
+                        grid[day][hour] = if (broadPrediction >= 0.1) broadPrediction else 0.0
+                        android.util.Log.d("BoltAssist", "TIER 2 FALLBACK: Day=$day Hour=$hour -> ${grid[day][hour]} PLN (Kalman from ${sampledEarnings.size}/${broaderEarnings.size} broader samples)")
+                        
+                    } else {
+                        // Tier 3: No data at all
+                        grid[day][hour] = 0.0
+                        android.util.Log.d("BoltAssist", "TIER 3 NO DATA: Day=$day Hour=$hour -> 0.0 PLN")
                     }
                 }
             }
         }
         
+        android.util.Log.d("BoltAssist", "Prediction grid completed")
         return grid
     }
     

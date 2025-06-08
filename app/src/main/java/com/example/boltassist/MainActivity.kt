@@ -27,6 +27,7 @@ import com.example.boltassist.ui.theme.BoltAssistTheme
 import java.io.File
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.lerp
 import kotlinx.coroutines.delay
@@ -43,6 +44,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
 
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
@@ -94,6 +100,8 @@ class MainActivity : ComponentActivity() {
                 var selectedScreen by remember { mutableStateOf<Screen>(Screen.Graph) }
                 // Storage path for Settings
                 var displayPath by remember { mutableStateOf("Default App Directory") }
+                // Shared edit mode state
+                var editMode by remember { mutableStateOf(false) }
                 // Init TripManager and load persisted path
                 LaunchedEffect(Unit) {
                     TripManager.initialize(this@MainActivity)
@@ -143,10 +151,15 @@ class MainActivity : ComponentActivity() {
                     ) { inner ->
                         Box(Modifier.padding(inner)) {
                             when (selectedScreen) {
-                                Screen.Graph -> GraphScreen(onStartFloatingWindow = { requestOverlayPermissionAndStart() })
+                                Screen.Graph -> GraphScreen(
+                                    onStartFloatingWindow = { requestOverlayPermissionAndStart() },
+                                    editMode = editMode
+                                )
                                 Screen.Map -> MapScreen()
                                 Screen.Settings -> SettingsScreen(
                                     displayPath = displayPath,
+                                    editMode = editMode,
+                                    onEditModeChange = { editMode = it },
                                     onFolderSelect = {
                                         onFolderSelected = { selectedPath ->
                                             displayPath = Uri.parse(selectedPath).lastPathSegment ?: selectedPath
@@ -197,12 +210,23 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun GraphScreen(onStartFloatingWindow: () -> Unit) {
+fun GraphScreen(onStartFloatingWindow: () -> Unit, editMode: Boolean) {
     Column(Modifier.fillMaxSize().padding(8.dp)) {
-        Box(Modifier.weight(1f)) { WeeklyEarningsGrid() }
+        Box(Modifier.weight(1f)) { WeeklyEarningsGrid(editMode = editMode) }
         Spacer(Modifier.height(8.dp))
+        
+        // Main button row
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onStartFloatingWindow, Modifier.weight(1f)) { Text("Begin") }
+        }
+        
+        if (editMode) {
+            Text(
+                "Edit Mode: Click cells to add 5 PLN • Long press to clear",
+                fontSize = 12.sp,
+                color = Color.Red,
+                modifier = Modifier.padding(top = 8.dp)
+            )
         }
     }
 }
@@ -215,18 +239,88 @@ fun MapScreen() {
 }
 
 @Composable
-fun SettingsScreen(displayPath: String, onFolderSelect: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Storage Path", fontWeight = FontWeight.Bold)
-        Text(displayPath, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
-        Button(onClick = onFolderSelect, Modifier.fillMaxWidth()) {
-            Text("Select Directory")
+fun SettingsScreen(
+    displayPath: String, 
+    editMode: Boolean,
+    onEditModeChange: (Boolean) -> Unit,
+    onFolderSelect: () -> Unit
+) {
+    
+    Column(
+        Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), 
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Storage settings
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Storage Settings", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(8.dp))
+                Text("Storage Path", fontWeight = FontWeight.Medium)
+                Text(displayPath, color = Color.Gray, modifier = Modifier.padding(vertical = 4.dp))
+                Button(onClick = onFolderSelect, Modifier.fillMaxWidth()) {
+                    Text("Select Directory")
+                }
+            }
+        }
+        
+        // Debug settings
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Debug Options", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(8.dp))
+                
+                // Edit mode toggle
+                Row(
+                    Modifier.fillMaxWidth(), 
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { onEditModeChange(!editMode) },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (editMode) Color.Red else MaterialTheme.colorScheme.primary
+                        )
+                    ) { 
+                        Text(if (editMode) "Exit Edit" else "Edit Mode") 
+                    }
+                }
+                
+                if (editMode) {
+                    Text(
+                        "Edit Mode Active: Use the grid in Graph tab\n• Click cells to add 5 PLN\n• Long press to clear cells", 
+                        fontSize = 12.sp, 
+                        color = Color.Red,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+                
+                Spacer(Modifier.height(8.dp))
+                
+                // Reset database
+                Button(
+                    onClick = { 
+                        TripManager.resetDatabase()
+                        android.util.Log.d("BoltAssist", "Database reset from Settings")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) { 
+                    Text("Reset Database", color = Color.White) 
+                }
+                
+                Text(
+                    "⚠️ Warning: This will permanently delete all trip data!",
+                    fontSize = 12.sp,
+                    color = Color.Red,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
     }
 }
 
 @Composable
-fun WeeklyEarningsGrid() {
+fun WeeklyEarningsGrid(editMode: Boolean = false) {
     // Get live grid data
     val trips = TripManager.tripsCache
     val actualGrid = TripManager.getWeeklyGrid()
@@ -328,35 +422,41 @@ fun WeeklyEarningsGrid() {
                         val currentDay = currentTime.first
                         val currentHour = currentTime.second
                         
-                        val value = if (day == currentDay) {
-                            // Current day: past/current hours show actual, future hours show predictions
-                            if (hour <= currentHour) {
-                                // Past and current hours of today: show actual earnings
-                                if (actualGrid[day][hour] > 0.0) {
-                                    actualGrid[day][hour]
-                                } else {
-                                    0.0 // No actual data - black cell
+                                                    val value = if (day == currentDay) {
+                                // Current day: past/current hours show actual, future hours show predictions
+                                // Convert hour index back to actual hour for comparison
+                                val actualHourForComparison = (hour + 1) % 24
+                                if (actualHourForComparison <= currentHour) {
+                                    // Past and current hours of today: show actual earnings
+                                    if (actualGrid[day][hour] > 0.0) {
+                                        actualGrid[day][hour]
+                                    } else {
+                                        0.0 // No actual data - black cell
+                                    }
+                                                                } else {
+                                    // Future hours of today: show predictions
+                                    if (kalmanGrid[day][hour] >= 0.1) {
+                                        kalmanGrid[day][hour] // Prediction for upcoming hours
+                                    } else {
+                                        0.0 // No prediction - black cell
+                                    }
                                 }
                             } else {
-                                // Future hours of today: show predictions
-                                if (kalmanGrid[day][hour] >= 5.0) {
-                                    kalmanGrid[day][hour] // Prediction for upcoming hours (minimum 5 PLN)
+                                // Past days and future days: always show predictions from historical data
+                                if (kalmanGrid[day][hour] >= 0.1) {
+                                    kalmanGrid[day][hour] // Historical predictions
                                 } else {
-                                    0.0 // No prediction or too low - black cell
+                                    0.0 // No prediction - black cell
                                 }
                             }
-                        } else {
-                            // Past days and future days: always show predictions from historical data
-                            if (kalmanGrid[day][hour] >= 5.0) {
-                                kalmanGrid[day][hour] // Historical predictions (minimum 5 PLN)
-                            } else {
-                                0.0 // No prediction or too low - black cell
-                            }
-                        }
-                        SimpleGridCell(
-                            earnings = value,
-                            isCurrentTime = isCurrent
-                        )
+                            SimpleGridCell(
+                                earnings = value,
+                                isCurrentTime = isCurrent,
+                                editMode = editMode,
+                                onEditClick = { add5PLN -> 
+                                    TripManager.editCell(day, hour, add5PLN)
+                                }
+                            )
                     }
                 }
             }
@@ -420,7 +520,9 @@ fun WeeklyEarningsGrid() {
                             
                             val value = if (day == currentDay) {
                                 // Current day: past/current hours show actual, future hours show predictions
-                                if (hour <= currentHour) {
+                                // Convert hour index back to actual hour for comparison
+                                val actualHourForComparison = (hour + 1) % 24
+                                if (actualHourForComparison <= currentHour) {
                                     // Past and current hours of today: show actual earnings
                                     if (actualGrid[day][hour] > 0.0) {
                                         actualGrid[day][hour]
@@ -429,23 +531,27 @@ fun WeeklyEarningsGrid() {
                                     }
                                 } else {
                                     // Future hours of today: show predictions
-                                    if (kalmanGrid[day][hour] >= 5.0) {
-                                        kalmanGrid[day][hour] // Prediction for upcoming hours (minimum 5 PLN)
+                                    if (kalmanGrid[day][hour] >= 0.1) {
+                                        kalmanGrid[day][hour] // Prediction for upcoming hours
                                     } else {
-                                        0.0 // No prediction or too low - black cell
+                                        0.0 // No prediction - black cell
                                     }
                                 }
                             } else {
                                 // Past days and future days: always show predictions from historical data
-                                if (kalmanGrid[day][hour] >= 5.0) {
-                                    kalmanGrid[day][hour] // Historical predictions (minimum 5 PLN)
+                                if (kalmanGrid[day][hour] >= 0.1) {
+                                    kalmanGrid[day][hour] // Historical predictions
                                 } else {
-                                    0.0 // No prediction or too low - black cell
+                                    0.0 // No prediction - black cell
                                 }
                             }
                             SimpleGridCell(
                                 earnings = value,
-                                isCurrentTime = isCurrent
+                                isCurrentTime = isCurrent,
+                                editMode = editMode,
+                                onEditClick = { add5PLN -> 
+                                    TripManager.editCell(day, hour, add5PLN)
+                                }
                             )
                         }
                     }
@@ -456,7 +562,12 @@ fun WeeklyEarningsGrid() {
 }
 
 @Composable
-fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
+fun SimpleGridCell(
+    earnings: Double, 
+    isCurrentTime: Boolean,
+    editMode: Boolean = false,
+    onEditClick: ((Boolean) -> Unit)? = null
+) {
     // Color stops for gradient: 0=black, 8=red, 25=yellow, 45=green, 90=excellentBlue
     val excellentBlue = Color(0.2f, 0.6f, 1f)
     val stops = listOf(
@@ -485,6 +596,16 @@ fun SimpleGridCell(earnings: Double, isCurrentTime: Boolean) {
             .size(25.dp)
             .background(fillColor)
             .border(borderWidth, borderColor)
+            .then(
+                if (editMode && onEditClick != null) {
+                    Modifier.pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { onEditClick(true) }, // Click to add 5 PLN
+                            onLongPress = { onEditClick(false) } // Long press to clear
+                        )
+                    }
+                } else Modifier
+            )
     ) {
         // Only show text for earnings > 0.5 PLN (to avoid showing very small predictions as "0")
         if (earnings >= 0.5) {
@@ -529,7 +650,7 @@ fun LegendItem(color: Color, label: String, isSpecial: Boolean = false) {
 @Composable
 fun DefaultPreview() {
     BoltAssistTheme {
-        GraphScreen(onStartFloatingWindow = {})
+        GraphScreen(onStartFloatingWindow = {}, editMode = false)
     }
 }
 
