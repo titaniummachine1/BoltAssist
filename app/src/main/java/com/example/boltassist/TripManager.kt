@@ -358,12 +358,37 @@ object TripManager {
             }
         }
         
-        // Save empty database to file and notify
+        // Explicitly delete the database file from storage to ensure a clean reset
         try {
-            saveCacheAndNotify()
+            if (storageTreeUri != null) {
+                // Handle SAF storage
+                val tree = DocumentFile.fromTreeUri(context, storageTreeUri!!)
+                val fileDoc = tree?.findFile("trips_database.json")
+                if (fileDoc?.exists() == true) {
+                    if (fileDoc.delete()) {
+                        android.util.Log.d("BoltAssist", "RESET: Successfully deleted database file from SAF URI.")
+                    } else {
+                        android.util.Log.w("BoltAssist", "RESET: Failed to delete database file from SAF URI.")
+                    }
+                }
+            } else if (storageDirectory != null) {
+                // Handle direct file storage
+                val file = File(storageDirectory, "trips_database.json")
+                if (file.exists()) {
+                    if (file.delete()) {
+                        android.util.Log.d("BoltAssist", "RESET: Successfully deleted database file from directory.")
+                    } else {
+                        android.util.Log.w("BoltAssist", "RESET: Failed to delete database file from directory.")
+                    }
+                }
+            }
         } catch (e: Exception) {
-            android.util.Log.e("BoltAssist", "Failed to save empty database", e)
+            android.util.Log.e("BoltAssist", "RESET: Failed to delete database file", e)
         }
+        
+        // Notify UI to refresh.
+        // This ensures the grid clears immediately.
+        dataVersion++
     }
     
 
