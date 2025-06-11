@@ -164,7 +164,7 @@ class MainActivity : ComponentActivity() {
                                         Icon(Icons.Filled.Menu, contentDescription = "Menu")
                                     }
                                 },
-                                title = { Text("BoltAssist") }
+                                title = { }
                             )
                         }
                     ) { inner ->
@@ -394,7 +394,7 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
             delay(2_000L) // Update every 2 seconds for faster response to time travel
             val newTime = TripManager.getCurrentTime()
             if (newTime != currentTime) {
-                android.util.Log.d("BoltAssist", "Time change detected: $currentTime -> $newTime")
+                android.util.Log.d("BoltAssist", "Time change dethetected: $currentTime -> $newTime")
                 currentTime = newTime
             }
         }
