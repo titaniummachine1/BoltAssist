@@ -276,7 +276,10 @@ object TripManager {
         
         if (!file.exists()) {
             android.util.Log.d("BoltAssist", "LOAD: No trips file found at: ${file.absolutePath}")
-            _tripsCache.clear()
+            if (_tripsCache.isNotEmpty()) {
+                _tripsCache.clear()
+                dataVersion++
+            }
             return
         }
         
@@ -285,7 +288,10 @@ object TripManager {
         try {
             val json = file.readText()
             if (json.isBlank()) {
-                _tripsCache.clear()
+                if (_tripsCache.isNotEmpty()) {
+                    _tripsCache.clear()
+                    dataVersion++
+                }
                 android.util.Log.w("BoltAssist", "LOAD: Trips file is blank, cache cleared.")
                 return
             }
@@ -296,6 +302,7 @@ object TripManager {
             // Atomically update cache only after successful parse
             _tripsCache.clear()
             _tripsCache.addAll(tripsArray)
+            dataVersion++
             
             android.util.Log.d("BoltAssist", "LOAD: Added ${tripsArray.size} trips to cache.")
             android.util.Log.d("BoltAssist", "LOAD: Final cache size: ${_tripsCache.size}")
@@ -493,7 +500,10 @@ object TripManager {
         }
         val fileDoc = tree.findFile("trips_database.json") ?: run {
             android.util.Log.d("BoltAssist", "No trips file found at URI: $uri")
-            _tripsCache.clear()
+            if (_tripsCache.isNotEmpty()) {
+                _tripsCache.clear()
+                dataVersion++
+            }
             return
         }
         fileDoc.uri.let { fileUri ->
@@ -501,7 +511,10 @@ object TripManager {
                 context.contentResolver.openInputStream(fileUri)?.use { inputStream ->
                     val json = inputStream.bufferedReader().use { it.readText() }
                      if (json.isBlank()) {
-                        _tripsCache.clear()
+                         if (_tripsCache.isNotEmpty()) {
+                            _tripsCache.clear()
+                            dataVersion++
+                        }
                         android.util.Log.w("BoltAssist", "LOAD: Trips file from URI is blank, cache cleared.")
                         return@use
                     }
@@ -510,6 +523,7 @@ object TripManager {
                     // Atomically update cache only after successful parse
                     _tripsCache.clear()
                     _tripsCache.addAll(tripsArray)
+                    dataVersion++
                     android.util.Log.d("BoltAssist", "Loaded ${_tripsCache.size} trips from URI: $fileUri")
                 }
             } catch (e: Exception) {
