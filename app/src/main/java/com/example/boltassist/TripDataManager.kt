@@ -8,7 +8,7 @@ import kotlinx.coroutines.*
 /**
  * Weighted earning data for EMA calculations
  */
-data class WeightedEarning(val amount: Double, val timestamp: Long, val isEditMode: Boolean)
+data class WeightedEarning(val amount: Double, val timestamp: Long, val isEditMode: Boolean, val tag: String? = null)
 
 /**
  * Dedicated module for trip data management and real-time predictions
@@ -234,8 +234,9 @@ object TripDataManager {
                     try {
                         val date = dateOnlyFormat.parse(dateStr)
                         if (date != null) {
+                            val dayTag = TripManager.getDayTag(date)
                             earningsMap[day][hour].add(
-                                WeightedEarning(total, date.time, isEdit)
+                                WeightedEarning(total, date.time, isEdit, dayTag)
                             )
                         }
                     } catch (e: Exception) {
@@ -248,7 +249,9 @@ object TripDataManager {
         // Generate value-weighted predictions with granular propagation
         for (day in 0..6) {
             for (hour in 0..23) {
-                val prediction = calculateValueWeightedPrediction(earningsMap, day, hour)
+                val dateForCell = getDateForDayHour(day, hour)
+                val dayTag = TripManager.getDayTag(dateForCell)
+                val prediction = calculateValueWeightedPrediction(earningsMap, day, hour, dayTag)
                 grid[day][hour] = prediction
                 
                 if (prediction > 0) {
@@ -265,14 +268,16 @@ object TripDataManager {
      * Higher earnings have exponentially more influence on cross-day propagation
      */
     private fun calculateValueWeightedPrediction(
-        earningsMap: Array<Array<MutableList<WeightedEarning>>>, 
-        targetDay: Int, 
-        targetHour: Int
+        earningsMap: Array<Array<MutableList<WeightedEarning>>>,
+        targetDay: Int,
+        targetHour: Int,
+        targetDayTag: String?
     ): Double {
-        val isWeekend = targetDay >= 5
+        val isTargetWeekend = targetDay >= 5
+        val isTargetHoliday = targetDayTag != null
         var totalWeightedValue = 0.0
         var totalWeight = 0.0
-        
+
         // Step 1: Direct same-slot data (highest priority)
         val directEarnings = earningsMap[targetDay][targetHour]
         directEarnings.forEach { earning ->
@@ -280,68 +285,83 @@ object TripDataManager {
             val valueMultiplier = earning.amount / 10.0 // Scaled earning value
             val editModeBoost = if (earning.isEditMode) 3.0 else 1.0
             val weight = 1.0 * valueMultiplier * editModeBoost
-            
+
             totalWeightedValue += earning.amount * weight
             totalWeight += weight
-            
+
             android.util.Log.v("BoltAssist", "DIRECT: day=$targetDay hour=$targetHour amount=${earning.amount} weight=$weight")
         }
-        
+
         // Step 2: Cross-day same-hour propagation (earnings-weighted influence)
         for (sourceDay in 0..6) {
             if (sourceDay == targetDay) continue // Skip same day (already processed)
-            
-            val sourceDayIsWeekend = sourceDay >= 5
+
             val crossDayEarnings = earningsMap[sourceDay][targetHour]
-            
+
             crossDayEarnings.forEach { earning ->
+                val isSourceWeekend = sourceDay >= 5
+                val isSourceHoliday = earning.tag != null
+
                 // Value-based cross-day weight calculation, stronger propagation
                 val valueMultiplier = (earning.amount / 10.0) * 0.2 // More aggressive cross-day influence
-                val dayTypeMultiplier = when {
-                    sourceDayIsWeekend == isWeekend -> 0.8 // Same day type (weekday->weekday, weekend->weekend)
-                    else -> 0.3 // Different day type (weekday->weekend, weekend->weekday)
-                }
                 val editModeBoost = if (earning.isEditMode) 2.0 else 1.0
-                val weight = valueMultiplier * dayTypeMultiplier * editModeBoost
                 
+                // Prioritize matching day types (Holiday > Weekend > Weekday)
+                val dayTypeMultiplier = when {
+                    // Highest priority: Holiday to Holiday
+                    isTargetHoliday && isSourceHoliday -> 1.0
+                    // High priority: Weekend to Weekend (non-holidays)
+                    isTargetWeekend && isSourceWeekend && !isTargetHoliday && !isSourceHoliday -> 0.8
+                    // Standard: Weekday to Weekday (non-holidays)
+                    !isTargetWeekend && !isSourceWeekend && !isTargetHoliday && !isSourceHoliday -> 0.7
+                    
+                    // Fallbacks for cross-type prediction (e.g., predict holiday from weekend data)
+                    (isTargetHoliday && isSourceWeekend) || (isTargetWeekend && isSourceHoliday) -> 0.5
+                    
+                    // Lowest priority: Weekday <-> Weekend/Holiday are least similar
+                    else -> 0.2
+                }
+
+                val weight = valueMultiplier * dayTypeMultiplier * editModeBoost
+
                 totalWeightedValue += earning.amount * weight
-            totalWeight += weight
-            
-                android.util.Log.v("BoltAssist", "CROSS-DAY: source=$sourceDay->target=$targetDay hour=$targetHour amount=${earning.amount} weight=$weight")
+                totalWeight += weight
+
+                android.util.Log.v("BoltAssist", "CROSS-DAY: source=$sourceDay->target=$targetDay hour=$targetHour amount=${earning.amount} weight=$weight tag=${earning.tag} multiplier=$dayTypeMultiplier")
             }
         }
-        
+
         // Step 3: Adjacent hour spillover (only from same day, weaker influence)
         if (totalWeight < 1.0) { // Increased threshold to allow more spillover when data is sparse
             for (hourOffset in listOf(-1, 1)) {
                 val adjacentHour = (targetHour + hourOffset + 24) % 24
                 val adjacentEarnings = earningsMap[targetDay][adjacentHour]
-                
+
                 adjacentEarnings.forEach { earning ->
                     val valueMultiplier = (earning.amount / 10.0) * 0.1 // Adjacent influence also based on value
                     val editModeBoost = if (earning.isEditMode) 1.5 else 1.0
                     val weight = valueMultiplier * editModeBoost
-                    
+
                     totalWeightedValue += earning.amount * weight
                     totalWeight += weight
-                    
+
                     android.util.Log.v("BoltAssist", "ADJACENT: day=$targetDay hour=$adjacentHour->$targetHour amount=${earning.amount} weight=$weight")
                 }
             }
         }
-        
+
         val result = if (totalWeight > 0.0) totalWeightedValue / totalWeight else 0.0
-        
+
         // Apply minimum threshold and smoothing (lowered threshold for better visibility)
         val finalResult = if (result >= 0.1) result else 0.0
-        
+
         // Always log predictions for debugging, especially when they're 0
         if (finalResult > 0) {
             android.util.Log.d("BoltAssist", "PREDICTION: day=$targetDay hour=$targetHour result=$finalResult totalWeight=$totalWeight")
         } else if (totalWeight > 0) {
             android.util.Log.d("BoltAssist", "PREDICTION BELOW THRESHOLD: day=$targetDay hour=$targetHour rawResult=$result totalWeight=$totalWeight")
         }
-        
+
         return finalResult
     }
     
