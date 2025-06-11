@@ -49,7 +49,7 @@ object TripDataManager {
         
         // Save to storage
         try {
-            TripManager.saveCacheAndNotify()
+            TripManager.forceSync()
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to save trip", e)
         }
@@ -69,26 +69,26 @@ object TripDataManager {
         
         // hour parameter is already 0-23 index from grid, so use directly
         calendar.set(Calendar.HOUR_OF_DAY, hour)
-        // Randomize start time within the hour for more realistic test data
-        calendar.set(Calendar.MINUTE, (0..45).random()) // Start within first 45 mins
-        calendar.set(Calendar.SECOND, (0..59).random())
+        // Use predictable start time for consistent manual testing
+        calendar.set(Calendar.MINUTE, 15) 
+        calendar.set(Calendar.SECOND, 0)
         
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val startTime = dateFormat.format(calendar.time)
         
-        // Generate plausible random data for the trip
-        val randomDuration = (5..25).random() // 5-25 minutes to avoid spilling over hour too much
-        val randomEarnings = (5..50).random() // 5-50 PLN for variety
+        // Use predictable data for manual testing as requested.
+        val durationMinutes = 15 // Predictable 15-minute duration
+        val earningsPLN = 10     // Predictable 10 PLN earnings
         
-        calendar.add(Calendar.MINUTE, randomDuration)
+        calendar.add(Calendar.MINUTE, durationMinutes)
         val endTime = dateFormat.format(calendar.time)
         
         val trip = TripData(
             id = "edit_${System.currentTimeMillis()}_d${day}_h${hour}",
             startTime = startTime,
             endTime = endTime,
-            durationMinutes = randomDuration,
-            earningsPLN = randomEarnings,
+            durationMinutes = durationMinutes,
+            earningsPLN = earningsPLN,
             startLocation = LocationData(52.2297 + (Math.random() - 0.5) * 0.2, 21.0122 + (Math.random() - 0.5) * 0.2),
             endLocation = LocationData(52.2297 + (Math.random() - 0.5) * 0.2, 21.0122 + (Math.random() - 0.5) * 0.2),
             startStreet = "Edit Mode",
@@ -98,13 +98,13 @@ object TripDataManager {
         TripManager._tripsCache.add(trip)
         
         try {
-            // Use the new centralized save function to persist data and notify the UI
-            TripManager.saveCacheAndNotify()
+            // Use forceSync to ensure data is written to disk immediately
+            TripManager.forceSync()
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to save edit trip", e)
         }
         
-        android.util.Log.d("BoltAssist", "Added edit trip for day=$day hour=$hour: $randomEarnings PLN")
+        android.util.Log.d("BoltAssist", "Added edit trip for day=$day hour=$hour: $earningsPLN PLN")
         return trip
     }
     
@@ -143,8 +143,8 @@ object TripDataManager {
         TripManager._tripsCache.removeAll(tripsToRemove)
         
         try {
-            // Use the new centralized save function to persist data and notify the UI
-            TripManager.saveCacheAndNotify()
+            // Use forceSync to ensure data is written to disk immediately
+            TripManager.forceSync()
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to save after clearing", e)
         }
