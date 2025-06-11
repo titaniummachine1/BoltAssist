@@ -102,20 +102,39 @@ class MainActivity : ComponentActivity() {
                 var displayPath by remember { mutableStateOf("Default App Directory") }
                 // Shared edit mode state
                 var editMode by remember { mutableStateOf(false) }
-                // Init TripManager and load persisted path
+                // Init TripManager and load persisted path (only once)
+                var initComplete by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
-                    TripManager.initialize(this@MainActivity)
+                    if (initComplete) {
+                        android.util.Log.d("BoltAssist", "MAIN: Skipping LaunchedEffect - already initialized")
+                        return@LaunchedEffect
+                    }
+                    
+                    android.util.Log.d("BoltAssist", "MAIN: MainActivity LaunchedEffect - TripManager already initialized: ${TripManager.isInitialized()}")
+                    
+                    if (!TripManager.isInitialized()) {
+                        TripManager.initialize(this@MainActivity)
+                        android.util.Log.d("BoltAssist", "MAIN: TripManager initialized with ${TripManager.tripsCache.size} trips")
+                    } else {
+                        android.util.Log.d("BoltAssist", "MAIN: TripManager already initialized with ${TripManager.tripsCache.size} trips")
+                    }
+                    
                     val prefs = getSharedPreferences("BoltAssist", MODE_PRIVATE)
                     val saved = prefs.getString("storage_path", null)
                     if (saved != null) {
+                        android.util.Log.d("BoltAssist", "MAIN: Setting storage URI: $saved")
                         TripManager.setStorageDirectoryUri(Uri.parse(saved))
                         displayPath = Uri.parse(saved).lastPathSegment ?: saved
                     } else {
                         val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist")
                             ?: filesDir.resolve("BoltAssist")
+                        android.util.Log.d("BoltAssist", "MAIN: Setting default storage directory: ${defaultDir.absolutePath}")
                         TripManager.setStorageDirectory(defaultDir)
                         displayPath = "Default App Directory"
                     }
+                    
+                    initComplete = true
+                    android.util.Log.d("BoltAssist", "MAIN: Final cache size after storage setup: ${TripManager.tripsCache.size}")
                 }
                 // Drawer
                 ModalNavigationDrawer(
@@ -296,6 +315,20 @@ fun SettingsScreen(
                 
                 Spacer(Modifier.height(8.dp))
                 
+                // Generate test data
+                Button(
+                    onClick = { 
+                        TripManager.generateKalmanTestData()
+                        android.util.Log.d("BoltAssist", "Generated test data - cache size: ${TripManager.tripsCache.size}")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Green)
+                ) { 
+                    Text("Generate Test Data", color = Color.White) 
+                }
+                
+                Spacer(Modifier.height(8.dp))
+                
                 // Reset database
                 Button(
                     onClick = { 
@@ -314,6 +347,47 @@ fun SettingsScreen(
                     color = Color.Red,
                     modifier = Modifier.padding(top = 4.dp)
                 )
+                
+                Spacer(Modifier.height(16.dp))
+                
+                // Diagnostic info
+                Text("Diagnostic Info", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                val tripsCount by remember { derivedStateOf { TripManager.tripsCache.size } }
+                Text("Trips in cache: $tripsCount", fontSize = 12.sp, color = Color.Gray)
+                Text("Storage: ${TripManager.getStorageInfo()}", fontSize = 12.sp, color = Color.Gray)
+                Text("TripManager initialized: ${TripManager.isInitialized()}", fontSize = 12.sp, color = Color.Gray)
+                
+                Button(
+                    onClick = { 
+                        // Force reload from storage
+                        TripManager.reloadFromFile()
+                        android.util.Log.d("BoltAssist", "Reloaded from file - cache size: ${TripManager.tripsCache.size}")
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { 
+                    Text("Reload from Storage") 
+                }
+                
+                Button(
+                    onClick = { 
+                        // Debug: List all trips in cache
+                        android.util.Log.d("BoltAssist", "=== DEBUG: ALL TRIPS IN CACHE (${TripManager.tripsCache.size}) ===")
+                        TripManager.tripsCache.forEachIndexed { index, trip ->
+                            android.util.Log.d("BoltAssist", "[$index] ID: ${trip.id}")
+                            android.util.Log.d("BoltAssist", "  Start: ${trip.startTime}")
+                            android.util.Log.d("BoltAssist", "  End: ${trip.endTime}")
+                            android.util.Log.d("BoltAssist", "  Earnings: ${trip.earningsPLN} PLN")
+                            android.util.Log.d("BoltAssist", "  Duration: ${trip.durationMinutes} min")
+                            android.util.Log.d("BoltAssist", "  Start Street: ${trip.startStreet}")
+                            android.util.Log.d("BoltAssist", "  End Street: ${trip.endStreet}")
+                        }
+                        android.util.Log.d("BoltAssist", "=== END DEBUG ===")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan)
+                ) { 
+                    Text("Debug: List All Trips") 
+                }
             }
         }
     }
@@ -321,10 +395,10 @@ fun SettingsScreen(
 
 @Composable
 fun WeeklyEarningsGrid(editMode: Boolean = false) {
-    // Get live grid data
+    // Get live grid data with proper reactivity
     val trips = TripManager.tripsCache
-    val actualGrid = TripManager.getWeeklyGrid()
-    val kalmanGrid = TripDataManager.getAdvancedPredictionGrid()
+    val actualGrid by remember(trips.size) { mutableStateOf(TripManager.getWeeklyGrid()) }
+    val kalmanGrid by remember(trips.size) { mutableStateOf(TripDataManager.getAdvancedPredictionGrid()) }
     // Track system time to update highlight immediately and every 2 seconds for responsiveness
     var currentTime by remember { mutableStateOf(TripManager.getCurrentTime()) }
     LaunchedEffect(Unit) {
@@ -344,6 +418,10 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
         android.util.Log.d("BoltAssist", "Grid recomposing with ${trips.size} trips")
         // Force update current time when trips change (like when time traveling)
         currentTime = TripManager.getCurrentTime()
+        
+        // Log grid data for debugging
+        android.util.Log.d("BoltAssist", "Actual grid sample: [0][8]=${actualGrid[0][8]}, [1][8]=${actualGrid[1][8]}")
+        android.util.Log.d("BoltAssist", "Prediction grid sample: [0][8]=${kalmanGrid[0][8]}, [1][8]=${kalmanGrid[1][8]}")
     }
     
     // Listen to lifecycle events to refresh time when app comes to foreground
@@ -422,16 +500,18 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                         val currentDay = currentTime.first
                         val currentHour = currentTime.second
                         
-                                                    // Simple DRY logic: Always show actual data if it exists, otherwise show predictions
-                        val value = if (actualGrid[day][hour] > 0.0) {
-                            // Has actual trip data - show it regardless of day/time
-                            actualGrid[day][hour]
-                        } else if (kalmanGrid[day][hour] >= 0.1) {
-                            // No actual data but has prediction - show prediction
-                            kalmanGrid[day][hour]
-                        } else {
-                            // No data at all - black cell
-                            0.0
+                                                    // FIXED: Show the HIGHER of actual vs predicted to capture earning potential
+                        val actualValue = actualGrid[day][hour]
+                        val predictedValue = kalmanGrid[day][hour]
+                        
+                        val value = when {
+                            actualValue > 0.0 && predictedValue > 0.0 -> {
+                                // Both exist - show the higher value (potential vs reality)
+                                maxOf(actualValue, predictedValue)
+                            }
+                            actualValue > 0.0 -> actualValue // Only actual data
+                            predictedValue > 0.0 -> predictedValue // Only prediction (lowered threshold)
+                            else -> 0.0 // No data
                         }
                             SimpleGridCell(
                                 earnings = value,
@@ -506,16 +586,18 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                             val currentDay = currentTime.first
                             val currentHour = currentTime.second
                             
-                            // Simple DRY logic: Always show actual data if it exists, otherwise show predictions
-                            val value = if (actualGrid[day][hour] > 0.0) {
-                                // Has actual trip data - show it regardless of day/time
-                                actualGrid[day][hour]
-                            } else if (kalmanGrid[day][hour] >= 0.1) {
-                                // No actual data but has prediction - show prediction
-                                kalmanGrid[day][hour]
-                            } else {
-                                // No data at all - black cell
-                                0.0
+                            // FIXED: Show the HIGHER of actual vs predicted to capture earning potential
+                            val actualValue = actualGrid[day][hour]
+                            val predictedValue = kalmanGrid[day][hour]
+                            
+                            val value = when {
+                                actualValue > 0.0 && predictedValue > 0.0 -> {
+                                    // Both exist - show the higher value (potential vs reality)
+                                    maxOf(actualValue, predictedValue)
+                                }
+                                actualValue > 0.0 -> actualValue // Only actual data
+                                predictedValue > 0.0 -> predictedValue // Only prediction (lowered threshold)
+                                else -> 0.0 // No data
                             }
                             SimpleGridCell(
                                 earnings = value,
@@ -583,8 +665,8 @@ fun SimpleGridCell(
                 } else Modifier
             )
     ) {
-        // Only show text for earnings > 0.5 PLN (to avoid showing very small predictions as "0")
-        if (earnings >= 0.5) {
+        // Show text for earnings > 0.1 PLN (lowered threshold to see small predictions)
+        if (earnings >= 0.1) {
             Text(
                 text = "${earnings.toInt()}",
                 fontSize = 8.sp,

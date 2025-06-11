@@ -3,10 +3,16 @@ package com.example.boltassist
 import android.location.Location
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.*
+
+/**
+ * Weighted earning data for EMA calculations
+ */
+data class WeightedEarning(val amount: Double, val timestamp: Long, val isEditMode: Boolean)
 
 /**
  * Dedicated module for trip data management and real-time predictions
- * Handles adding trips and sophisticated prediction algorithms
+ * Handles adding trips and sophisticated prediction algorithms with proper earning-based weighting
  */
 object TripDataManager {
     
@@ -53,15 +59,21 @@ object TripDataManager {
     }
     
     /**
-     * Add trip for specific day/hour (edit mode)
+     * Add trip for specific day/hour (edit mode) - proper hour calculation
      */
     fun addTripForDayHour(day: Int, hour: Int, earnings: Int = 5): TripData {
         val targetDate = getDateForDayHour(day, hour)
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        val startTime = dateFormat.format(targetDate)
-        
         val calendar = Calendar.getInstance()
         calendar.time = targetDate
+        
+        // hour parameter is already 0-23 index from grid, so use directly
+        calendar.set(Calendar.HOUR_OF_DAY, hour)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val startTime = dateFormat.format(calendar.time)
+        
         calendar.add(Calendar.MINUTE, 5)
         val endTime = dateFormat.format(calendar.time)
         
@@ -96,7 +108,7 @@ object TripDataManager {
         val targetDate = getDateForDayHour(day, hour)
         val calendar = Calendar.getInstance()
         calendar.time = targetDate
-        val targetHour = calendar.get(Calendar.HOUR_OF_DAY)
+        val targetHour = hour // hour is already 0-23 index
         val targetDay = when (calendar.get(Calendar.DAY_OF_WEEK)) {
             Calendar.MONDAY -> 0; Calendar.TUESDAY -> 1; Calendar.WEDNESDAY -> 2
             Calendar.THURSDAY -> 3; Calendar.FRIDAY -> 4; Calendar.SATURDAY -> 5
@@ -132,20 +144,24 @@ object TripDataManager {
     }
     
     /**
-     * Advanced prediction algorithm with 7-day fallback
-     * Uses same day-of-week first, then falls back to nearby days if insufficient data
+     * EARNINGS-WEIGHTED prediction algorithm with granular value-based cross-day propagation
      */
     fun getAdvancedPredictionGrid(): Array<DoubleArray> {
         val grid = Array(7) { DoubleArray(24) { 0.0 } }
         val trips = TripManager._tripsCache.filter { it.endTime != null && it.earningsPLN > 0 }
         
-        if (trips.isEmpty()) return grid
+        if (trips.isEmpty()) {
+            android.util.Log.d("BoltAssist", "No trips available for predictions")
+            return grid
+        }
         
         val calendar = Calendar.getInstance()
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         
-        // Build earnings map: [day][hour] -> list of earnings
-        val earningsMap = Array(7) { Array(24) { mutableListOf<Double>() } }
+        android.util.Log.d("BoltAssist", "Calculating predictions from ${trips.size} trips")
+        
+        // Build earnings map with proper hour indexing (0-23)
+        val earningsMap = Array(7) { Array(24) { mutableListOf<WeightedEarning>() } }
         
         trips.forEach { trip ->
             try {
@@ -157,20 +173,28 @@ object TripDataManager {
                     Calendar.THURSDAY -> 3; Calendar.FRIDAY -> 4; Calendar.SATURDAY -> 5
                     Calendar.SUNDAY -> 6; else -> return@forEach
                 }
-                val tripHour = calendar.get(Calendar.HOUR_OF_DAY)
-                val tripHourIndex = (tripHour - 1 + 24) % 24
+                val tripHour = calendar.get(Calendar.HOUR_OF_DAY) // Keep 0-23 for internal calculations
                 
-                earningsMap[tripDay][tripHourIndex].add(trip.earningsPLN.toDouble())
+                val isEditMode = trip.startStreet == "Edit Mode"
+                earningsMap[tripDay][tripHour].add(
+                    WeightedEarning(trip.earningsPLN.toDouble(), tripDate.time, isEditMode)
+                )
+                
+                android.util.Log.v("BoltAssist", "Mapped trip: day=$tripDay hour=$tripHour amount=${trip.earningsPLN} editMode=$isEditMode")
             } catch (e: Exception) { 
-                // Skip invalid trips
+                android.util.Log.w("BoltAssist", "Failed to parse trip date: ${trip.startTime}")
             }
         }
         
-        // Generate predictions with fallback logic
+        // Generate value-weighted predictions with granular propagation
         for (day in 0..6) {
             for (hour in 0..23) {
-                val prediction = calculatePredictionWithFallback(earningsMap, day, hour)
-                grid[day][hour] = if (prediction >= 1.0) prediction else 0.0
+                val prediction = calculateValueWeightedPrediction(earningsMap, day, hour)
+                grid[day][hour] = prediction
+                
+                if (prediction > 0) {
+                    android.util.Log.v("BoltAssist", "Prediction: day=$day hour=$hour value=$prediction PLN")
+                }
             }
         }
         
@@ -178,92 +202,88 @@ object TripDataManager {
     }
     
     /**
-     * Calculate prediction with sophisticated fallback logic
+     * VALUE-WEIGHTED prediction with granular earning amount influence
+     * Higher earnings have exponentially more influence on cross-day propagation
      */
-    private fun calculatePredictionWithFallback(
-        earningsMap: Array<Array<MutableList<Double>>>, 
+    private fun calculateValueWeightedPrediction(
+        earningsMap: Array<Array<MutableList<WeightedEarning>>>, 
         targetDay: Int, 
         targetHour: Int
     ): Double {
-        val MIN_SAMPLES = 2 // Need at least 2 samples for reliable prediction
-        
-        // Level 1: Exact same day-of-week and hour
-        val exactMatch = earningsMap[targetDay][targetHour]
-        if (exactMatch.size >= MIN_SAMPLES) {
-            val avg = exactMatch.average()
-            android.util.Log.v("BoltAssist", "Exact match day=$targetDay hour=$targetHour: $avg PLN from ${exactMatch.size} trips")
-            return avg
-        }
-        
-        // Level 2: Same hour, different days (prefer weekdays vs weekends)
         val isWeekend = targetDay >= 5
-        val sameHourDifferentDays = mutableListOf<Double>()
+        var totalWeightedValue = 0.0
+        var totalWeight = 0.0
         
-        for (day in 0..6) {
-            val dayIsWeekend = day >= 5
-            // Prefer same type (weekday/weekend)
-            val priority = if (dayIsWeekend == isWeekend) 1.0 else 0.5
+        // Step 1: Direct same-slot data (highest priority)
+        val directEarnings = earningsMap[targetDay][targetHour]
+        directEarnings.forEach { earning ->
+            // Base weight of 1.0, multiplied by earning value for value-based influence
+            val valueMultiplier = kotlin.math.sqrt(earning.amount) // Square root dampens extreme values
+            val editModeBoost = if (earning.isEditMode) 3.0 else 1.0
+            val weight = 1.0 * valueMultiplier * editModeBoost
             
-            earningsMap[day][targetHour].forEach { earning ->
-                // Add multiple times based on priority to weight the average
-                repeat((priority * 2).toInt()) {
-                    sameHourDifferentDays.add(earning)
+            totalWeightedValue += earning.amount * weight
+            totalWeight += weight
+            
+            android.util.Log.v("BoltAssist", "DIRECT: day=$targetDay hour=$targetHour amount=${earning.amount} weight=$weight")
+        }
+        
+        // Step 2: Cross-day same-hour propagation (earnings-weighted influence)
+        for (sourceDay in 0..6) {
+            if (sourceDay == targetDay) continue // Skip same day (already processed)
+            
+            val sourceDayIsWeekend = sourceDay >= 5
+            val crossDayEarnings = earningsMap[sourceDay][targetHour]
+            
+            crossDayEarnings.forEach { earning ->
+                // Value-based cross-day weight calculation
+                val valueMultiplier = kotlin.math.sqrt(earning.amount) * 0.1 // Lower base multiplier for cross-day
+                val dayTypeMultiplier = when {
+                    sourceDayIsWeekend == isWeekend -> 0.8 // Same day type (weekday->weekday, weekend->weekend)
+                    else -> 0.3 // Different day type (weekday->weekend, weekend->weekday)
+                }
+                val editModeBoost = if (earning.isEditMode) 2.0 else 1.0
+                val weight = valueMultiplier * dayTypeMultiplier * editModeBoost
+                
+                totalWeightedValue += earning.amount * weight
+                totalWeight += weight
+                
+                android.util.Log.v("BoltAssist", "CROSS-DAY: source=$sourceDay->target=$targetDay hour=$targetHour amount=${earning.amount} weight=$weight")
+            }
+        }
+        
+        // Step 3: Adjacent hour spillover (only from same day, weaker influence)
+        if (totalWeight < 0.5) {
+            for (hourOffset in listOf(-1, 1)) {
+                val adjacentHour = (targetHour + hourOffset + 24) % 24
+                val adjacentEarnings = earningsMap[targetDay][adjacentHour]
+                
+                adjacentEarnings.forEach { earning ->
+                    val valueMultiplier = kotlin.math.sqrt(earning.amount) * 0.05 // Very low base for adjacent hours
+                    val editModeBoost = if (earning.isEditMode) 1.5 else 1.0
+                    val weight = valueMultiplier * editModeBoost
+                    
+                    totalWeightedValue += earning.amount * weight
+                    totalWeight += weight
+                    
+                    android.util.Log.v("BoltAssist", "ADJACENT: day=$targetDay hour=$adjacentHour->$targetHour amount=${earning.amount} weight=$weight")
                 }
             }
         }
         
-        if (sameHourDifferentDays.size >= MIN_SAMPLES) {
-            val avg = sameHourDifferentDays.average()
-            android.util.Log.v("BoltAssist", "Same hour fallback day=$targetDay hour=$targetHour: $avg PLN from ${sameHourDifferentDays.size} weighted samples")
-            return avg
+        val result = if (totalWeight > 0.0) totalWeightedValue / totalWeight else 0.0
+        
+        // Apply minimum threshold and smoothing (lowered threshold for better visibility)
+        val finalResult = if (result >= 0.1) result else 0.0
+        
+        // Always log predictions for debugging, especially when they're 0
+        if (finalResult > 0) {
+            android.util.Log.d("BoltAssist", "PREDICTION: day=$targetDay hour=$targetHour result=$finalResult totalWeight=$totalWeight")
+        } else if (totalWeight > 0) {
+            android.util.Log.d("BoltAssist", "PREDICTION BELOW THRESHOLD: day=$targetDay hour=$targetHour rawResult=$result totalWeight=$totalWeight")
         }
         
-        // Level 3: Nearby hours (±2 hours), same day preference
-        val nearbyHours = mutableListOf<Double>()
-        for (hourOffset in -2..2) {
-            if (hourOffset == 0) continue // Already checked exact hour
-            val nearbyHour = (targetHour + hourOffset + 24) % 24
-            
-            // First try same day
-            earningsMap[targetDay][nearbyHour].forEach { earning ->
-                nearbyHours.add(earning * 1.2) // Boost same-day nearby hours
-            }
-            
-            // Then try other days of same type (weekday/weekend)
-            for (day in 0..6) {
-                if (day == targetDay) continue
-                val dayIsWeekend = day >= 5
-                if (dayIsWeekend == isWeekend) {
-                    earningsMap[day][nearbyHour].forEach { earning ->
-                        nearbyHours.add(earning)
-                    }
-                }
-            }
-        }
-        
-        if (nearbyHours.size >= MIN_SAMPLES) {
-            val avg = nearbyHours.average()
-            android.util.Log.v("BoltAssist", "Nearby hours fallback day=$targetDay hour=$targetHour: $avg PLN from ${nearbyHours.size} samples")
-            return avg
-        }
-        
-        // Level 4: General average for this day type, scaled by hour patterns
-        val allEarningsThisDay = earningsMap[targetDay].flatMap { it }
-        val allEarningsAllDays = earningsMap.flatMap { it.flatMap { it } }
-        
-        if (allEarningsThisDay.isNotEmpty()) {
-            val avg = allEarningsThisDay.average() * 0.7 // Conservative scaling
-            android.util.Log.v("BoltAssist", "Same day average fallback day=$targetDay hour=$targetHour: $avg PLN from ${allEarningsThisDay.size} day samples")
-            return avg
-        }
-        
-        if (allEarningsAllDays.isNotEmpty()) {
-            val avg = allEarningsAllDays.average() * 0.3 // Very conservative fallback
-            android.util.Log.v("BoltAssist", "Global average fallback day=$targetDay hour=$targetHour: $avg PLN from ${allEarningsAllDays.size} global samples")
-            return avg
-        }
-        
-        return 0.0
+        return finalResult
     }
     
     /**
@@ -284,8 +304,8 @@ object TripDataManager {
         // Go to target day
         calendar.add(Calendar.DAY_OF_YEAR, day)
         
-        // Set target hour
-        calendar.set(Calendar.HOUR_OF_DAY, hour + 1) // +1 because grid hours are 1-24, not 0-23
+        // hour is already 0-23, so use directly
+        calendar.set(Calendar.HOUR_OF_DAY, hour)
         calendar.set(Calendar.MINUTE, 0)
         calendar.set(Calendar.SECOND, 0)
         calendar.set(Calendar.MILLISECOND, 0)

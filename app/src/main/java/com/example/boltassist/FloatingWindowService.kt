@@ -36,10 +36,21 @@ class FloatingWindowService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        // Only initialize TripManager if not already done - don't clear existing data
+        
+        // Initialize TripManager and ensure data is loaded
         if (!TripManager.isInitialized()) {
             TripManager.initialize(this)
+            android.util.Log.d("BoltAssist", "FLOATING: TripManager initialized with ${TripManager.tripsCache.size} trips")
+        } else {
+            // TripManager already initialized, but ensure data is fresh
+            TripManager.reloadFromFile()
+            android.util.Log.d("BoltAssist", "FLOATING: TripManager reloaded from storage with ${TripManager.tripsCache.size} trips")
         }
+        
+        // Initialize traffic tracking
+        TrafficDataManager.initialize(this)
+        TrafficDataManager.startTracking()
+        
         android.util.Log.d("BoltAssist", "FloatingWindowService started - TripManager has ${TripManager.tripsCache.size} trips")
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         
@@ -48,8 +59,15 @@ class FloatingWindowService : Service() {
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // DON'T reload from storage - preserve edit mode data in memory
-        android.util.Log.d("BoltAssist", "FloatingWindow started - preserving ${TripManager.tripsCache.size} trips in memory")
+        android.util.Log.d("BoltAssist", "FLOATING: onStartCommand - current cache size: ${TripManager.tripsCache.size}")
+        
+        // Check if TripManager needs to reload data
+        if (TripManager.tripsCache.isEmpty()) {
+            android.util.Log.w("BoltAssist", "FLOATING: Cache is empty, forcing reload from storage")
+            TripManager.reloadFromFile()
+            android.util.Log.d("BoltAssist", "FLOATING: After reload - cache size: ${TripManager.tripsCache.size}")
+        }
+        
         return START_STICKY
     }
     
@@ -106,6 +124,7 @@ class FloatingWindowService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
+                @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
@@ -230,6 +249,7 @@ class FloatingWindowService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
+                @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
@@ -316,6 +336,8 @@ class FloatingWindowService : Service() {
             override fun onLocationResult(locationResult: LocationResult) {
                 locationResult.lastLocation?.let { location ->
                     currentLocation = location
+                    // Feed location to traffic tracking system
+                    TrafficDataManager.processLocation(location)
                 }
             }
         }
@@ -332,6 +354,7 @@ class FloatingWindowService : Service() {
             // Stop recording
             android.util.Log.d("BoltAssist", "FLOATING: Ending trip with earnings: ${earnings / 10} PLN (raw: $earnings)")
             android.util.Log.d("BoltAssist", "FLOATING: Current system time: ${TripManager.getCurrentTimeString()}")
+            android.util.Log.d("BoltAssist", "FLOATING: Cache size before stopping trip: ${TripManager.tripsCache.size}")
             
             // Validate trip before stopping
             if (earnings <= 0) {
@@ -344,16 +367,24 @@ class FloatingWindowService : Service() {
             // Validate completed trip
             completedTrip?.let { trip ->
                 android.util.Log.d("BoltAssist", "FLOATING: TRIP VALIDATION:")
-                android.util.Log.d("BoltAssist", "  Has endTime: ${trip.endTime != null}")
-                android.util.Log.d("BoltAssist", "  Duration > 0: ${trip.durationMinutes > 0}")
-                android.util.Log.d("BoltAssist", "  Earnings > 0: ${trip.earningsPLN > 0}")
+                android.util.Log.d("BoltAssist", "  Trip ID: ${trip.id}")
+                android.util.Log.d("BoltAssist", "  Start Time: ${trip.startTime}")
+                android.util.Log.d("BoltAssist", "  End Time: ${trip.endTime}")
+                android.util.Log.d("BoltAssist", "  Duration: ${trip.durationMinutes} minutes")
+                android.util.Log.d("BoltAssist", "  Earnings: ${trip.earningsPLN} PLN")
+                android.util.Log.d("BoltAssist", "  Start Street: ${trip.startStreet}")
+                android.util.Log.d("BoltAssist", "  End Street: ${trip.endStreet}")
                 
                 if (trip.endTime == null || trip.durationMinutes <= 0) {
                     android.util.Log.e("BoltAssist", "FLOATING: INVALID TRIP - will be skipped in grid!")
+                } else {
+                    android.util.Log.d("BoltAssist", "FLOATING: VALID TRIP - should appear in grid")
                 }
-            }
+            } ?: android.util.Log.e("BoltAssist", "FLOATING: ERROR - stopTrip returned null!")
             
             android.util.Log.d("BoltAssist", "FLOATING: Cache size after trip: ${TripManager.tripsCache.size}")
+            android.util.Log.d("BoltAssist", "FLOATING: Storage info: ${TripManager.getStorageInfo()}")
+            
             isRecording = false
             // Reset earnings for next trip
             earnings = 50 // back to default 5 PLN for next trip
@@ -361,8 +392,10 @@ class FloatingWindowService : Service() {
             moneyDisplay?.text = "${earnings / 10.0} PLN"
         } else {
             // Start recording
-            android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation and default earnings 5 PLN")
+            android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation")
             android.util.Log.d("BoltAssist", "FLOATING: Current system time: ${TripManager.getCurrentTimeString()}")
+            android.util.Log.d("BoltAssist", "FLOATING: Cache size before starting trip: ${TripManager.tripsCache.size}")
+            
             val startedTrip = TripManager.startTrip(currentLocation)
             android.util.Log.d("BoltAssist", "FLOATING: Trip started: $startedTrip")
             isRecording = true
@@ -373,6 +406,7 @@ class FloatingWindowService : Service() {
     
     override fun onDestroy() {
         super.onDestroy()
+        TrafficDataManager.stopTracking()
         floatingView?.let { windowManager.removeView(it) }
         expandedView?.let { windowManager.removeView(it) }
     }

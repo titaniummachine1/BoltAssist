@@ -119,24 +119,44 @@ object TripManager {
     }
     
     fun setStorageDirectory(directory: File) {
+        // Check if we're setting the same directory and already have data
+        val isSameDirectory = storageDirectory?.absolutePath == directory.absolutePath
+        val hasExistingData = _tripsCache.isNotEmpty()
+        
         storageDirectory = directory
         if (!directory.exists()) {
             directory.mkdirs()
             android.util.Log.d("BoltAssist", "Created storage directory: ${directory.absolutePath}")
         }
         android.util.Log.d("BoltAssist", "Storage directory set to: ${directory.absolutePath}")
-        // Load existing trips into cache
-        loadTripsFromFile()
+        
+        // Only reload if we don't have the same directory or if we have no data
+        if (!isSameDirectory || !hasExistingData) {
+            android.util.Log.d("BoltAssist", "Loading trips from file (same dir: $isSameDirectory, has data: $hasExistingData)")
+            loadTripsFromFile()
+        } else {
+            android.util.Log.d("BoltAssist", "Skipping reload - same directory and existing data preserved (${_tripsCache.size} trips)")
+        }
     }
     
     /**
      * Set storage directory using SAF tree URI.
      */
     fun setStorageDirectoryUri(uri: Uri) {
+        // Check if we're setting the same URI and already have data
+        val isSameUri = storageTreeUri?.toString() == uri.toString()
+        val hasExistingData = _tripsCache.isNotEmpty()
+        
         storageTreeUri = uri
         android.util.Log.d("BoltAssist", "Storage tree URI set to: $uri")
-        // Load existing trips from URI
-        loadTripsFromUri()
+        
+        // Only reload if we don't have the same URI or if we have no data
+        if (!isSameUri || !hasExistingData) {
+            android.util.Log.d("BoltAssist", "Loading trips from URI (same URI: $isSameUri, has data: $hasExistingData)")
+            loadTripsFromUri()
+        } else {
+            android.util.Log.d("BoltAssist", "Skipping URI reload - same URI and existing data preserved (${_tripsCache.size} trips)")
+        }
     }
     
     fun startTrip(location: Location?): TripData {
@@ -196,18 +216,28 @@ object TripManager {
     }
     
     private fun saveTripToFile(trip: TripData) {
+        android.util.Log.d("BoltAssist", "SAVE: Adding trip to cache - ID: ${trip.id}, Earnings: ${trip.earningsPLN}")
+        android.util.Log.d("BoltAssist", "SAVE: Cache size before add: ${_tripsCache.size}")
+        
         // Add to in-memory cache for UI (immediate real-time update)
         _tripsCache.add(trip)
+        
+        android.util.Log.d("BoltAssist", "SAVE: Cache size after add: ${_tripsCache.size}")
         
         // Force immediate save to files for persistence
         try {
             if (storageTreeUri != null) {
+                android.util.Log.d("BoltAssist", "SAVE: Saving to SAF URI")
                 saveTripsToUri()
             } else if (storageDirectory != null) {
+                android.util.Log.d("BoltAssist", "SAVE: Saving to file directory")
                 saveAllTripsToFile()
+            } else {
+                android.util.Log.e("BoltAssist", "SAVE: ERROR - No storage directory or URI configured!")
             }
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to save trip immediately", e)
+            e.printStackTrace()
         }
     }
     
@@ -227,24 +257,47 @@ object TripManager {
     }
     
     private fun loadTripsFromFile() {
-        val directory = storageDirectory ?: return
+        val directory = storageDirectory ?: run {
+            android.util.Log.w("BoltAssist", "LOAD: No storage directory set, skipping load")
+            return
+        }
         val file = File(directory, "trips_database.json")
+        
+        android.util.Log.d("BoltAssist", "LOAD: Starting load from ${file.absolutePath}")
+        android.util.Log.d("BoltAssist", "LOAD: Clearing cache (current size: ${_tripsCache.size})")
         // Clear any cached trips so removing the file resets the grid
         _tripsCache.clear()
         
         if (!file.exists()) {
-            android.util.Log.d("BoltAssist", "No trips file found at: ${file.absolutePath}")
+            android.util.Log.d("BoltAssist", "LOAD: No trips file found at: ${file.absolutePath}")
             return
         }
+        
+        android.util.Log.d("BoltAssist", "LOAD: Loading from file: ${file.absolutePath} (size: ${file.length()} bytes)")
         
         try {
             val json = file.readText()
             val tripsArray = gson.fromJson(json, Array<TripData>::class.java)
-            // Load into in-memory cache, filtering out any test trips (created with Test Street)
-            _tripsCache.addAll(
-                tripsArray.filterNot { it.startStreet == "Test Street" && it.endStreet == "Test Street" }
-            )
-            android.util.Log.d("BoltAssist", "Loaded ${tripsCache.size} trips from: ${file.absolutePath}")
+            
+            android.util.Log.d("BoltAssist", "LOAD: Parsed ${tripsArray.size} trips from JSON")
+            
+            // Debug: Log all trips and filtering
+            tripsArray.forEachIndexed { index, trip ->
+                val isBasicTestTrip = trip.startStreet == "Test Street" && trip.endStreet == "Test Street" && !trip.startStreet.contains("Historical")
+                android.util.Log.v("BoltAssist", "LOAD: Trip[$index] - ID: ${trip.id}, Start: ${trip.startStreet}, End: ${trip.endStreet}, Earnings: ${trip.earningsPLN}, FilterOut: $isBasicTestTrip")
+            }
+            
+            // Load into in-memory cache, only filter out basic test trips (not historical test data)
+            val filteredTrips = tripsArray.filterNot { 
+                it.startStreet == "Test Street" && it.endStreet == "Test Street" && 
+                !it.startStreet.contains("Historical") 
+            }
+            
+            _tripsCache.addAll(filteredTrips)
+            
+            android.util.Log.d("BoltAssist", "LOAD: Added ${filteredTrips.size} trips to cache (filtered out ${tripsArray.size - filteredTrips.size} basic test trips)")
+            android.util.Log.d("BoltAssist", "LOAD: Final cache size: ${_tripsCache.size}")
+            
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to load trips from file", e)
             e.printStackTrace()
