@@ -199,29 +199,49 @@ object TripDataManager {
         
         android.util.Log.d("BoltAssist", "Calculating predictions from ${trips.size} trips after decay/retention")
         
-        // Build earnings map with proper hour indexing (0-23)
-        val earningsMap = Array(7) { Array(24) { mutableListOf<WeightedEarning>() } }
-        
+        // Build earnings map by first calculating daily totals for each hour slot
+        val dailyTotalsMap = Array(7) { Array(24) { mutableMapOf<String, Pair<Double, Boolean>>() } }
+        val dateOnlyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
         trips.forEach { trip ->
             try {
                 val tripDate = dateFormat.parse(trip.startTime) ?: return@forEach
                 calendar.time = tripDate
-                
+
                 val tripDay = when (calendar.get(Calendar.DAY_OF_WEEK)) {
                     Calendar.MONDAY -> 0; Calendar.TUESDAY -> 1; Calendar.WEDNESDAY -> 2
                     Calendar.THURSDAY -> 3; Calendar.FRIDAY -> 4; Calendar.SATURDAY -> 5
                     Calendar.SUNDAY -> 6; else -> return@forEach
                 }
-                val tripHour = calendar.get(Calendar.HOUR_OF_DAY) // Keep 0-23 for internal calculations
-                
+                val tripHour = calendar.get(Calendar.HOUR_OF_DAY)
+                val dateString = dateOnlyFormat.format(tripDate)
                 val isEditMode = trip.startStreet == "Edit Mode"
-                earningsMap[tripDay][tripHour].add(
-                    WeightedEarning(trip.earningsPLN.toDouble(), tripDate.time, isEditMode)
-                )
-                
-                android.util.Log.v("BoltAssist", "Mapped trip: day=$tripDay hour=$tripHour amount=${trip.earningsPLN} editMode=$isEditMode")
-            } catch (e: Exception) { 
-                android.util.Log.w("BoltAssist", "Failed to parse trip date: ${trip.startTime}")
+
+                val dailyMap = dailyTotalsMap[tripDay][tripHour]
+                val current = dailyMap[dateString] ?: (0.0 to false)
+                dailyMap[dateString] = (current.first + trip.earningsPLN.toDouble()) to (current.second || isEditMode)
+            } catch (e: Exception) {
+                android.util.Log.w("BoltAssist", "Failed to parse trip date for daily total: ${trip.startTime}")
+            }
+        }
+
+        val earningsMap = Array(7) { Array(24) { mutableListOf<WeightedEarning>() } }
+        for (day in 0..6) {
+            for (hour in 0..23) {
+                val dateMap = dailyTotalsMap[day][hour]
+                dateMap.forEach { (dateStr, pair) ->
+                    val (total, isEdit) = pair
+                    try {
+                        val date = dateOnlyFormat.parse(dateStr)
+                        if (date != null) {
+                            earningsMap[day][hour].add(
+                                WeightedEarning(total, date.time, isEdit)
+                            )
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("BoltAssist", "Failed to parse date string for weighted earning: $dateStr")
+                    }
+                }
             }
         }
         
