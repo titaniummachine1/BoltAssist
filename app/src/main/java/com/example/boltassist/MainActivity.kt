@@ -113,18 +113,18 @@ class MainActivity : ComponentActivity() {
                     android.util.Log.d("BoltAssist", "MAIN: MainActivity LaunchedEffect - TripManager already initialized: ${TripManager.isInitialized()}")
                     
                     if (!TripManager.isInitialized()) {
-                        TripManager.initialize(this@MainActivity)
+                    TripManager.initialize(this@MainActivity)
                         android.util.Log.d("BoltAssist", "MAIN: TripManager initialized with ${TripManager.tripsCache.size} trips")
                     } else {
                         android.util.Log.d("BoltAssist", "MAIN: TripManager already initialized with ${TripManager.tripsCache.size} trips")
                     }
                     
                     val prefs = getSharedPreferences("BoltAssist", MODE_PRIVATE)
-                    val saved = prefs.getString("storage_path", null)
-                    if (saved != null) {
-                        android.util.Log.d("BoltAssist", "MAIN: Setting storage URI: $saved")
-                        TripManager.setStorageDirectoryUri(Uri.parse(saved))
-                        displayPath = Uri.parse(saved).lastPathSegment ?: saved
+                    val savedPath = prefs.getString("storage_path", null)
+                    if (savedPath != null) {
+                        android.util.Log.d("BoltAssist", "MAIN: Setting storage URI: $savedPath")
+                        TripManager.setStorageDirectoryUri(Uri.parse(savedPath))
+                        displayPath = Uri.parse(savedPath).lastPathSegment ?: savedPath
                     } else {
                         val defaultDir = getExternalFilesDir(null)?.resolve("BoltAssist")
                             ?: filesDir.resolve("BoltAssist")
@@ -241,7 +241,7 @@ fun GraphScreen(onStartFloatingWindow: () -> Unit, editMode: Boolean) {
         
         if (editMode) {
             Text(
-                "Edit Mode: Click cells to add 5 PLN • Long press to clear",
+                "Edit Mode: Click cells to add a random trip • Long press to clear",
                 fontSize = 12.sp,
                 color = Color.Red,
                 modifier = Modifier.padding(top = 8.dp)
@@ -306,25 +306,11 @@ fun SettingsScreen(
                 
                 if (editMode) {
                     Text(
-                        "Edit Mode Active: Use the grid in Graph tab\n• Click cells to add 5 PLN\n• Long press to clear cells", 
+                        "Edit Mode Active: Use the grid in Graph tab\n• Click cells to add a random trip\n• Long press to clear", 
                         fontSize = 12.sp, 
                         color = Color.Red,
                         modifier = Modifier.padding(top = 8.dp)
                     )
-                }
-                
-                Spacer(Modifier.height(8.dp))
-                
-                // Generate test data
-                Button(
-                    onClick = { 
-                        TripManager.generateKalmanTestData()
-                        android.util.Log.d("BoltAssist", "Generated test data - cache size: ${TripManager.tripsCache.size}")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Green)
-                ) { 
-                    Text("Generate Test Data", color = Color.White) 
                 }
                 
                 Spacer(Modifier.height(8.dp))
@@ -395,10 +381,12 @@ fun SettingsScreen(
 
 @Composable
 fun WeeklyEarningsGrid(editMode: Boolean = false) {
-    // Get live grid data with proper reactivity
-    val trips = TripManager.tripsCache
-    val actualGrid by remember(trips.size) { mutableStateOf(TripManager.getWeeklyGrid()) }
-    val kalmanGrid by remember(trips.size) { mutableStateOf(TripDataManager.getAdvancedPredictionGrid()) }
+    // Get data version to trigger recomposition reliably
+    val dataVersion = TripManager.dataVersion
+    
+    val actualGrid by remember(dataVersion) { mutableStateOf(TripManager.getWeeklyGrid()) }
+    val kalmanGrid by remember(dataVersion) { mutableStateOf(TripDataManager.getAdvancedPredictionGrid()) }
+    
     // Track system time to update highlight immediately and every 2 seconds for responsiveness
     var currentTime by remember { mutableStateOf(TripManager.getCurrentTime()) }
     LaunchedEffect(Unit) {
@@ -411,11 +399,11 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
             }
         }
     }
-    // Compute header index for highlighting (map hour 0-23 to index 0-23 for 1-24 labels)
-    val highlightIndex = (currentTime.second - 1 + 24) % 24
+    // Compute header index for highlighting (hour is now 0-23, same as index)
+    val highlightIndex = currentTime.second
 
-    LaunchedEffect(trips.size) {
-        android.util.Log.d("BoltAssist", "Grid recomposing with ${trips.size} trips")
+    LaunchedEffect(dataVersion) {
+        android.util.Log.d("BoltAssist", "Grid recomposing due to data version change: $dataVersion")
         // Force update current time when trips change (like when time traveling)
         currentTime = TripManager.getCurrentTime()
         
@@ -431,7 +419,7 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
             if (event == Lifecycle.Event.ON_RESUME) {
                 // Immediately update time when app resumes (handles time travel)
                 currentTime = TripManager.getCurrentTime()
-                android.util.Log.d("BoltAssist", "App resumed - refreshed current time to: $currentTime")
+                android.util.Log.d("BoltAssist", "App resumed - refreshed time.")
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -459,14 +447,14 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                 // Empty cell for day labels column
                 Box(modifier = Modifier.size(25.dp))
                 
-                // Hour numbers 1-24
+                // Hour numbers 0-23
                 repeat(24) { hour ->
                     Box(
                         modifier = Modifier.size(25.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "${hour + 1}",
+                            text = "$hour",
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.Black
@@ -497,8 +485,6 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                     // Hour cells
                     repeat(24) { hour ->
                         val isCurrent = day == currentTime.first && hour == highlightIndex
-                        val currentDay = currentTime.first
-                        val currentHour = currentTime.second
                         
                                                     // FIXED: Show the HIGHER of actual vs predicted to capture earning potential
                         val actualValue = actualGrid[day][hour]
@@ -517,9 +503,9 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                                 earnings = value,
                                 isCurrentTime = isCurrent,
                                 editMode = editMode,
-                                onEditClick = { add5PLN -> 
-                                    if (add5PLN) {
-                                        TripDataManager.addTripForDayHour(day, hour, 5)
+                                onEditClick = { add -> 
+                                    if (add) {
+                                        TripDataManager.addTripForDayHour(day, hour)
                                     } else {
                                         TripDataManager.clearTripsForDayHour(day, hour)
                                     }
@@ -573,7 +559,7 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "${hour + 1}",
+                                text = "$hour",
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.Black
@@ -583,8 +569,6 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                         // Day cells for this hour
                         repeat(7) { day ->
                             val isCurrent = day == currentTime.first && hour == highlightIndex
-                            val currentDay = currentTime.first
-                            val currentHour = currentTime.second
                             
                             // FIXED: Show the HIGHER of actual vs predicted to capture earning potential
                             val actualValue = actualGrid[day][hour]
@@ -603,9 +587,9 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                                 earnings = value,
                                 isCurrentTime = isCurrent,
                                 editMode = editMode,
-                                onEditClick = { add5PLN -> 
-                                    if (add5PLN) {
-                                        TripDataManager.addTripForDayHour(day, hour, 5)
+                                onEditClick = { add -> 
+                                    if (add) {
+                                        TripDataManager.addTripForDayHour(day, hour)
                                     } else {
                                         TripDataManager.clearTripsForDayHour(day, hour)
                                     }
@@ -639,7 +623,7 @@ fun SimpleGridCell(
     val fillColor = if (earnings <= stops.first().first) {
         stops.first().second
     } else {
-        stops.zipWithNext().firstOrNull { (l, u) -> earnings <= u.first }?.let { (l, u) ->
+        stops.zipWithNext().firstOrNull { (_, u) -> earnings <= u.first }?.let { (l, u) ->
             val (lVal, lCol) = l
             val (uVal, uCol) = u
             val t = ((earnings - lVal) / (uVal - lVal)).toFloat().coerceIn(0f,1f)
@@ -658,7 +642,7 @@ fun SimpleGridCell(
                 if (editMode && onEditClick != null) {
                     Modifier.pointerInput(Unit) {
                         detectTapGestures(
-                            onTap = { onEditClick(true) }, // Click to add 5 PLN
+                            onTap = { onEditClick(true) }, // Click to add a trip
                             onLongPress = { onEditClick(false) } // Long press to clear
                         )
                     }

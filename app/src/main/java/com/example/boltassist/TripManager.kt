@@ -14,6 +14,9 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import kotlinx.coroutines.*
 import java.net.HttpURLConnection
 import java.net.URL
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 data class TripData(
     val id: String = UUID.randomUUID().toString(),
@@ -50,6 +53,8 @@ object TripManager {
     // In-memory cache as Compose state list for immediate UI updates
     val _tripsCache = mutableStateListOf<TripData>()
     val tripsCache: SnapshotStateList<TripData> get() = _tripsCache
+    // Data version for triggering recomposition
+    var dataVersion by mutableStateOf(0)
     // Optional storage URI for SAF-based directory
     private var storageTreeUri: Uri? = null
     // Map of month-day (MM-dd) -> holiday name
@@ -133,7 +138,7 @@ object TripManager {
         // Only reload if we don't have the same directory or if we have no data
         if (!isSameDirectory || !hasExistingData) {
             android.util.Log.d("BoltAssist", "Loading trips from file (same dir: $isSameDirectory, has data: $hasExistingData)")
-            loadTripsFromFile()
+        loadTripsFromFile()
         } else {
             android.util.Log.d("BoltAssist", "Skipping reload - same directory and existing data preserved (${_tripsCache.size} trips)")
         }
@@ -153,7 +158,7 @@ object TripManager {
         // Only reload if we don't have the same URI or if we have no data
         if (!isSameUri || !hasExistingData) {
             android.util.Log.d("BoltAssist", "Loading trips from URI (same URI: $isSameUri, has data: $hasExistingData)")
-            loadTripsFromUri()
+        loadTripsFromUri()
         } else {
             android.util.Log.d("BoltAssist", "Skipping URI reload - same URI and existing data preserved (${_tripsCache.size} trips)")
         }
@@ -173,18 +178,23 @@ object TripManager {
             startStreet = getStreetFromLocation(location) // TODO: Implement OSM reverse geocoding
         )
         
+        // Immediately add the new trip to the cache and save it.
+        _tripsCache.add(currentTrip!!)
+        saveCacheAndNotify()
+        
+        android.util.Log.d("BoltAssist", "Started and saved new trip: ${currentTrip!!.id}")
         return currentTrip!!
     }
     
     fun stopTrip(location: Location?, earnings: Int): TripData? {
-        val trip = currentTrip ?: return null
+        val tripInProgress = currentTrip ?: return null
         
         // Use EXACT same date format as test data
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val endTime = dateFormat.format(Date())
         val durationMinutes = ((System.currentTimeMillis() - tripStartTime) / 60000).toInt()
         
-        val completedTrip = trip.copy(
+        val completedTrip = tripInProgress.copy(
             endTime = endTime,
             durationMinutes = durationMinutes,
             earningsPLN = earnings,
@@ -194,9 +204,13 @@ object TripManager {
             endStreet = getStreetFromLocation(location) // TODO: Implement OSM reverse geocoding
         )
         
-        // Completed trip ready
+        // Find the original trip in the cache and update it
+        val index = _tripsCache.indexOfFirst { it.id == completedTrip.id }
+        if (index != -1) {
+            _tripsCache[index] = completedTrip
+        }
         
-        saveTripToFile(completedTrip)
+        saveCacheAndNotify()
         currentTrip = null
         
         return completedTrip
@@ -206,7 +220,6 @@ object TripManager {
         // Simple OSM Nominatim reverse geocoding
         return location?.let { 
             try {
-                val url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=${it.latitude}&lon=${it.longitude}&zoom=18&addressdetails=1"
                 // For now, return coordinates - OSM integration will be added later
                 "Lat: %.4f, Lng: %.4f".format(it.latitude, it.longitude)
             } catch (e: Exception) {
@@ -215,16 +228,10 @@ object TripManager {
         } ?: "Unknown"
     }
     
-    private fun saveTripToFile(trip: TripData) {
-        android.util.Log.d("BoltAssist", "SAVE: Adding trip to cache - ID: ${trip.id}, Earnings: ${trip.earningsPLN}")
-        android.util.Log.d("BoltAssist", "SAVE: Cache size before add: ${_tripsCache.size}")
-        
-        // Add to in-memory cache for UI (immediate real-time update)
-        _tripsCache.add(trip)
-        
-        android.util.Log.d("BoltAssist", "SAVE: Cache size after add: ${_tripsCache.size}")
-        
-        // Force immediate save to files for persistence
+    /**
+     * Centralized function to save the current cache and notify UI for recomposition.
+     */
+    fun saveCacheAndNotify() {
         try {
             if (storageTreeUri != null) {
                 android.util.Log.d("BoltAssist", "SAVE: Saving to SAF URI")
@@ -239,6 +246,8 @@ object TripManager {
             android.util.Log.e("BoltAssist", "Failed to save trip immediately", e)
             e.printStackTrace()
         }
+        dataVersion++
+        android.util.Log.d("BoltAssist", "SAVE & NOTIFY: Data version is now $dataVersion")
     }
     
     private fun saveAllTripsToFile() {
@@ -264,12 +273,10 @@ object TripManager {
         val file = File(directory, "trips_database.json")
         
         android.util.Log.d("BoltAssist", "LOAD: Starting load from ${file.absolutePath}")
-        android.util.Log.d("BoltAssist", "LOAD: Clearing cache (current size: ${_tripsCache.size})")
-        // Clear any cached trips so removing the file resets the grid
-        _tripsCache.clear()
         
         if (!file.exists()) {
             android.util.Log.d("BoltAssist", "LOAD: No trips file found at: ${file.absolutePath}")
+            _tripsCache.clear()
             return
         }
         
@@ -277,32 +284,26 @@ object TripManager {
         
         try {
             val json = file.readText()
+            if (json.isBlank()) {
+                _tripsCache.clear()
+                android.util.Log.w("BoltAssist", "LOAD: Trips file is blank, cache cleared.")
+                return
+            }
             val tripsArray = gson.fromJson(json, Array<TripData>::class.java)
             
             android.util.Log.d("BoltAssist", "LOAD: Parsed ${tripsArray.size} trips from JSON")
             
-            // Debug: Log all trips and filtering
-            tripsArray.forEachIndexed { index, trip ->
-                val isBasicTestTrip = trip.startStreet == "Test Street" && trip.endStreet == "Test Street" && !trip.startStreet.contains("Historical")
-                android.util.Log.v("BoltAssist", "LOAD: Trip[$index] - ID: ${trip.id}, Start: ${trip.startStreet}, End: ${trip.endStreet}, Earnings: ${trip.earningsPLN}, FilterOut: $isBasicTestTrip")
-            }
+            // Atomically update cache only after successful parse
+            _tripsCache.clear()
+            _tripsCache.addAll(tripsArray)
             
-            // Load into in-memory cache, only filter out basic test trips (not historical test data)
-            val filteredTrips = tripsArray.filterNot { 
-                it.startStreet == "Test Street" && it.endStreet == "Test Street" && 
-                !it.startStreet.contains("Historical") 
-            }
-            
-            _tripsCache.addAll(filteredTrips)
-            
-            android.util.Log.d("BoltAssist", "LOAD: Added ${filteredTrips.size} trips to cache (filtered out ${tripsArray.size - filteredTrips.size} basic test trips)")
+            android.util.Log.d("BoltAssist", "LOAD: Added ${tripsArray.size} trips to cache.")
             android.util.Log.d("BoltAssist", "LOAD: Final cache size: ${_tripsCache.size}")
             
         } catch (e: Exception) {
-            android.util.Log.e("BoltAssist", "Failed to load trips from file", e)
+            android.util.Log.e("BoltAssist", "Failed to load trips from file, cache not cleared to prevent data loss.", e)
             e.printStackTrace()
-            // If file is corrupted, start fresh
-            _tripsCache.clear()
+            // If file is corrupted, we don't clear the cache, preventing data loss
         }
     }
     
@@ -320,128 +321,9 @@ object TripManager {
         return _tripsCache.sortedByDescending { it.startTime }
     }
     
-    fun generateTestData() {
-        // Generate some test trips for today at different hours
-        val testTrips = listOf(
-            createTestTrip(8, 30, 25), // 8 AM, 30 minutes, 25 PLN
-            createTestTrip(10, 45, 40), // 10 AM, 45 minutes, 40 PLN  
-            createTestTrip(14, 60, 80), // 2 PM, 60 minutes, 80 PLN
-            createTestTrip(18, 25, 15), // 6 PM, 25 minutes, 15 PLN
-        )
-        
-        _tripsCache.addAll(testTrips)
-        
-        // Save test data to files
-        if (storageTreeUri != null) {
-            saveTripsToUri()
-        } else if (storageDirectory != null) {
-            saveAllTripsToFile()
-        }
-    }
-    
-    fun generateKalmanTestData() {
-        // Clear existing cache first
-        _tripsCache.clear()
-        
-        // Generate historical data for multiple weeks to test predictions
-        val calendar = Calendar.getInstance()
-        val today = calendar.time
-        
-        // Generate data for past 4 weeks with realistic patterns
-        for (week in 1..4) {
-            calendar.time = today
-            calendar.add(Calendar.WEEK_OF_YEAR, -week)
-            
-            for (day in 0..6) {
-                calendar.set(Calendar.DAY_OF_WEEK, when (day) {
-                    0 -> Calendar.MONDAY
-                    1 -> Calendar.TUESDAY
-                    2 -> Calendar.WEDNESDAY
-                    3 -> Calendar.THURSDAY
-                    4 -> Calendar.FRIDAY
-                    5 -> Calendar.SATURDAY
-                    6 -> Calendar.SUNDAY
-                    else -> Calendar.MONDAY
-                })
-                
-                val isWeekend = day >= 5
-                val hourPattern = if (isWeekend) {
-                    // Weekend: more spread out, peak at noon
-                    listOf(10 to 15, 11 to 20, 12 to 35, 13 to 30, 14 to 25, 18 to 20, 19 to 25, 20 to 30)
-                } else {
-                    // Weekday: morning and evening peaks
-                    listOf(7 to 25, 8 to 40, 9 to 30, 17 to 35, 18 to 45, 19 to 25, 22 to 15)
-                }
-                
-                hourPattern.forEach { (hour, baseEarnings) ->
-                    val variance = (-5..15).random()
-                    val earnings = maxOf(5, baseEarnings + variance)
-                    val duration = (15..90).random()
-                    
-                    val testTrip = createTestTripForWeek(calendar, hour, duration, earnings)
-                    _tripsCache.add(testTrip)
-                }
-            }
-        }
-        
-        // Save data
-        if (storageTreeUri != null) {
-            saveTripsToUri()
-        } else if (storageDirectory != null) {
-            saveAllTripsToFile()
-        }
-    }
-    
-    private fun createTestTripForWeek(calendar: Calendar, hour: Int, durationMinutes: Int, earningsPLN: Int): TripData {
-        calendar.set(Calendar.HOUR_OF_DAY, hour)
-        calendar.set(Calendar.MINUTE, (0..59).random())
-        calendar.set(Calendar.SECOND, 0)
-        
-        val startTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(calendar.time)
-        
-        calendar.add(Calendar.MINUTE, durationMinutes)
-        val endTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(calendar.time)
-        
-        return TripData(
-            id = "${System.currentTimeMillis()}_${hour}_${calendar.timeInMillis}",
-            startTime = startTime,
-            endTime = endTime,
-            durationMinutes = durationMinutes,
-            earningsPLN = earningsPLN,
-            startLocation = LocationData(52.2297 + Math.random() * 0.1, 21.0122 + Math.random() * 0.1),
-            endLocation = LocationData(52.2297 + Math.random() * 0.1, 21.0122 + Math.random() * 0.1),
-            startStreet = "Test Street Historical",
-            endStreet = "Test Street Historical"
-        )
-    }
-    
-    private fun createTestTrip(hour: Int, durationMinutes: Int, earningsPLN: Int): TripData {
-        val calendar = Calendar.getInstance()
-        calendar.set(Calendar.HOUR_OF_DAY, hour)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        
-        val startTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(calendar.time)
-        
-        calendar.add(Calendar.MINUTE, durationMinutes)
-        val endTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(calendar.time)
-        
-        return TripData(
-            id = System.currentTimeMillis().toString() + hour,
-            startTime = startTime,
-            endTime = endTime,
-            durationMinutes = durationMinutes,
-            earningsPLN = earningsPLN,
-            startLocation = LocationData(52.2297, 21.0122), // Warsaw center
-            endLocation = LocationData(52.2297, 21.0122),
-            startStreet = "Test Street",
-            endStreet = "Test Street"
-        )
-    }
-    
     fun forceSync() {
-        // Persist in-memory cache to file for export
-        saveAllTripsToFile()
+        // Persist in-memory cache to file for export and notify
+        saveCacheAndNotify()
     }
     
     fun getStorageInfo(): String {
@@ -469,13 +351,9 @@ object TripManager {
             }
         }
         
-        // Save empty database to file
+        // Save empty database to file and notify
         try {
-            if (storageTreeUri != null) {
-                saveTripsToUri()
-            } else if (storageDirectory != null) {
-                saveAllTripsToFile()
-            }
+            saveCacheAndNotify()
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to save empty database", e)
         }
@@ -537,9 +415,11 @@ object TripManager {
                         Calendar.SUNDAY -> 6
                         else -> 0
                     }
-                    // Determine raw hour (0-23) and map to 0-based index (header labels 1-24)
+                    // Determine raw hour (0-23)
                     val rawHour = calendar.get(Calendar.HOUR_OF_DAY)
-                    val hourIndex = (rawHour - 1 + 24) % 24
+                    // The hour from Calendar is 0-23, which is the correct index for a 24-element array.
+                    // No adjustment is needed.
+                    val hourIndex = rawHour
                     // Add total earnings to grid at mapped index
                     grid[day][hourIndex] += trip.earningsPLN.toDouble()
                 } catch (e: Exception) {
@@ -607,31 +487,34 @@ object TripManager {
      */
     private fun loadTripsFromUri() {
         val uri = storageTreeUri ?: return
-        // Clear any cached trips so removing stored URI file resets the grid
-        _tripsCache.clear()
         val tree = DocumentFile.fromTreeUri(context, uri) ?: run {
             android.util.Log.e("BoltAssist", "Invalid document tree URI: $uri")
             return
         }
         val fileDoc = tree.findFile("trips_database.json") ?: run {
             android.util.Log.d("BoltAssist", "No trips file found at URI: $uri")
+            _tripsCache.clear()
             return
         }
         fileDoc.uri.let { fileUri ->
             try {
                 context.contentResolver.openInputStream(fileUri)?.use { inputStream ->
                     val json = inputStream.bufferedReader().use { it.readText() }
+                     if (json.isBlank()) {
+                        _tripsCache.clear()
+                        android.util.Log.w("BoltAssist", "LOAD: Trips file from URI is blank, cache cleared.")
+                        return@use
+                    }
                     val tripsArray = gson.fromJson(json, Array<TripData>::class.java)
-                    // Load into in-memory cache, filtering out test trips
-                    _tripsCache.addAll(
-                        tripsArray.filterNot { it.startStreet == "Test Street" && it.endStreet == "Test Street" }
-                    )
-                    android.util.Log.d("BoltAssist", "Loaded ${tripsCache.size} trips from URI: $fileUri")
+                    
+                    // Atomically update cache only after successful parse
+                    _tripsCache.clear()
+                    _tripsCache.addAll(tripsArray)
+                    android.util.Log.d("BoltAssist", "Loaded ${_tripsCache.size} trips from URI: $fileUri")
                 }
             } catch (e: Exception) {
-                android.util.Log.e("BoltAssist", "Failed to load trips from URI: $fileUri", e)
+                android.util.Log.e("BoltAssist", "Failed to load trips from URI, cache not cleared to prevent data loss.", e)
                 e.printStackTrace()
-                _tripsCache.clear()
             }
         }
     }
@@ -707,7 +590,8 @@ object TripManager {
                             else -> 0
                         }
                         val rawHour = calendar.get(Calendar.HOUR_OF_DAY)
-                        val hourIndex = (rawHour - 1 + 24) % 24
+                        // The hour is 0-23 from calendar, which is the correct index.
+                        val hourIndex = rawHour
                         earningsMap.getOrPut(day to hourIndex) { mutableListOf() }.add(trip.earningsPLN)
                     }
                 }
@@ -759,7 +643,8 @@ object TripManager {
                             else -> continue
                         }
                         val tripHour = calendar.get(Calendar.HOUR_OF_DAY)
-                        val tripHourIndex = (tripHour - 1 + 24) % 24
+                        // The hour from calendar is 0-23, which is the correct index for the grid.
+                        val tripHourIndex = tripHour
                         
                         // Include all matching trips (edit mode and real trips)
                         if (tripDay == day && tripHourIndex == hour) {

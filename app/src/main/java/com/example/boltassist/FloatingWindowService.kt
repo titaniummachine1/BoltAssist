@@ -42,9 +42,9 @@ class FloatingWindowService : Service() {
             TripManager.initialize(this)
             android.util.Log.d("BoltAssist", "FLOATING: TripManager initialized with ${TripManager.tripsCache.size} trips")
         } else {
-            // TripManager already initialized, but ensure data is fresh
-            TripManager.reloadFromFile()
-            android.util.Log.d("BoltAssist", "FLOATING: TripManager reloaded from storage with ${TripManager.tripsCache.size} trips")
+            // TripManager already initialized by MainActivity, no need to reload.
+            // The singleton instance will have the most up-to-date data.
+            android.util.Log.d("BoltAssist", "FLOATING: TripManager already initialized, using existing instance with ${TripManager.tripsCache.size} trips")
         }
         
         // Initialize traffic tracking

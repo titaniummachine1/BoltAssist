@@ -49,7 +49,7 @@ object TripDataManager {
         
         // Save to storage
         try {
-            TripManager.forceSync()
+            TripManager.saveCacheAndNotify()
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to save trip", e)
         }
@@ -59,32 +59,38 @@ object TripDataManager {
     }
     
     /**
-     * Add trip for specific day/hour (edit mode) - proper hour calculation
+     * Add trip for specific day/hour (edit mode) - generates plausible random data
      */
-    fun addTripForDayHour(day: Int, hour: Int, earnings: Int = 5): TripData {
+    fun addTripForDayHour(day: Int, hour: Int): TripData {
+        android.util.Log.d("BoltAssist", "DEBUG EDIT: addTripForDayHour called with day=$day, hour=$hour")
         val targetDate = getDateForDayHour(day, hour)
         val calendar = Calendar.getInstance()
         calendar.time = targetDate
         
         // hour parameter is already 0-23 index from grid, so use directly
         calendar.set(Calendar.HOUR_OF_DAY, hour)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
+        // Randomize start time within the hour for more realistic test data
+        calendar.set(Calendar.MINUTE, (0..45).random()) // Start within first 45 mins
+        calendar.set(Calendar.SECOND, (0..59).random())
         
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val startTime = dateFormat.format(calendar.time)
         
-        calendar.add(Calendar.MINUTE, 5)
+        // Generate plausible random data for the trip
+        val randomDuration = (5..25).random() // 5-25 minutes to avoid spilling over hour too much
+        val randomEarnings = (5..50).random() // 5-50 PLN for variety
+        
+        calendar.add(Calendar.MINUTE, randomDuration)
         val endTime = dateFormat.format(calendar.time)
         
         val trip = TripData(
             id = "edit_${System.currentTimeMillis()}_d${day}_h${hour}",
             startTime = startTime,
             endTime = endTime,
-            durationMinutes = 5,
-            earningsPLN = earnings,
-            startLocation = LocationData(52.2297, 21.0122),
-            endLocation = LocationData(52.2297, 21.0122),
+            durationMinutes = randomDuration,
+            earningsPLN = randomEarnings,
+            startLocation = LocationData(52.2297 + (Math.random() - 0.5) * 0.2, 21.0122 + (Math.random() - 0.5) * 0.2),
+            endLocation = LocationData(52.2297 + (Math.random() - 0.5) * 0.2, 21.0122 + (Math.random() - 0.5) * 0.2),
             startStreet = "Edit Mode",
             endStreet = "Edit Mode"
         )
@@ -92,12 +98,13 @@ object TripDataManager {
         TripManager._tripsCache.add(trip)
         
         try {
-            TripManager.forceSync()
+            // Use the new centralized save function to persist data and notify the UI
+            TripManager.saveCacheAndNotify()
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to save edit trip", e)
         }
         
-        android.util.Log.d("BoltAssist", "Added edit trip for day=$day hour=$hour: $earnings PLN")
+        android.util.Log.d("BoltAssist", "Added edit trip for day=$day hour=$hour: $randomEarnings PLN")
         return trip
     }
     
@@ -105,6 +112,7 @@ object TripDataManager {
      * Clear all trips for specific day/hour
      */
     fun clearTripsForDayHour(day: Int, hour: Int) {
+        android.util.Log.d("BoltAssist", "DEBUG EDIT: clearTripsForDayHour called with day=$day, hour=$hour")
         val targetDate = getDateForDayHour(day, hour)
         val calendar = Calendar.getInstance()
         calendar.time = targetDate
@@ -135,7 +143,8 @@ object TripDataManager {
         TripManager._tripsCache.removeAll(tripsToRemove)
         
         try {
-            TripManager.forceSync()
+            // Use the new centralized save function to persist data and notify the UI
+            TripManager.saveCacheAndNotify()
         } catch (e: Exception) {
             android.util.Log.e("BoltAssist", "Failed to save after clearing", e)
         }
@@ -148,17 +157,47 @@ object TripDataManager {
      */
     fun getAdvancedPredictionGrid(): Array<DoubleArray> {
         val grid = Array(7) { DoubleArray(24) { 0.0 } }
-        val trips = TripManager._tripsCache.filter { it.endTime != null && it.earningsPLN > 0 }
         
+        // Implement trip retention/decay: only use the most recent N trips for each category
+        val allTrips = TripManager._tripsCache
+            .filter { it.endTime != null && it.earningsPLN > 0 }
+            .sortedByDescending { it.startTime }
+
+        val calendar = Calendar.getInstance()
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
+        val weekdayTrips = mutableListOf<TripData>()
+        val weekendTrips = mutableListOf<TripData>()
+        val holidayTrips = mutableListOf<TripData>()
+
+        allTrips.forEach { trip ->
+            try {
+                val date = dateFormat.parse(trip.startTime)
+                if (date != null) {
+                    val dayTag = TripManager.getDayTag(date)
+                    calendar.time = date
+                    val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
+                    val isWeekend = (dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY)
+
+                    if (dayTag != null && holidayTrips.size < 200) {
+                        holidayTrips.add(trip)
+                    } else if (isWeekend && weekendTrips.size < 300) {
+                        weekendTrips.add(trip)
+                    } else if (!isWeekend && dayTag == null && weekdayTrips.size < 500) {
+                        weekdayTrips.add(trip)
+                    }
+                }
+            } catch (e: Exception) { /* ignore parse error */ }
+        }
+    
+        val trips = (weekdayTrips + weekendTrips + holidayTrips).distinctBy { it.id }
+
         if (trips.isEmpty()) {
-            android.util.Log.d("BoltAssist", "No trips available for predictions")
+            android.util.Log.d("BoltAssist", "No trips available for predictions after filtering")
             return grid
         }
         
-        val calendar = Calendar.getInstance()
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        
-        android.util.Log.d("BoltAssist", "Calculating predictions from ${trips.size} trips")
+        android.util.Log.d("BoltAssist", "Calculating predictions from ${trips.size} trips after decay/retention")
         
         // Build earnings map with proper hour indexing (0-23)
         val earningsMap = Array(7) { Array(24) { mutableListOf<WeightedEarning>() } }
@@ -217,8 +256,8 @@ object TripDataManager {
         // Step 1: Direct same-slot data (highest priority)
         val directEarnings = earningsMap[targetDay][targetHour]
         directEarnings.forEach { earning ->
-            // Base weight of 1.0, multiplied by earning value for value-based influence
-            val valueMultiplier = kotlin.math.sqrt(earning.amount) // Square root dampens extreme values
+            // Weight is directly proportional to earnings, making high-value trips very influential.
+            val valueMultiplier = earning.amount / 10.0 // Scaled earning value
             val editModeBoost = if (earning.isEditMode) 3.0 else 1.0
             val weight = 1.0 * valueMultiplier * editModeBoost
             
@@ -236,8 +275,8 @@ object TripDataManager {
             val crossDayEarnings = earningsMap[sourceDay][targetHour]
             
             crossDayEarnings.forEach { earning ->
-                // Value-based cross-day weight calculation
-                val valueMultiplier = kotlin.math.sqrt(earning.amount) * 0.1 // Lower base multiplier for cross-day
+                // Value-based cross-day weight calculation, stronger propagation
+                val valueMultiplier = (earning.amount / 10.0) * 0.2 // More aggressive cross-day influence
                 val dayTypeMultiplier = when {
                     sourceDayIsWeekend == isWeekend -> 0.8 // Same day type (weekday->weekday, weekend->weekend)
                     else -> 0.3 // Different day type (weekday->weekend, weekend->weekday)
@@ -246,20 +285,20 @@ object TripDataManager {
                 val weight = valueMultiplier * dayTypeMultiplier * editModeBoost
                 
                 totalWeightedValue += earning.amount * weight
-                totalWeight += weight
-                
+            totalWeight += weight
+            
                 android.util.Log.v("BoltAssist", "CROSS-DAY: source=$sourceDay->target=$targetDay hour=$targetHour amount=${earning.amount} weight=$weight")
             }
         }
         
         // Step 3: Adjacent hour spillover (only from same day, weaker influence)
-        if (totalWeight < 0.5) {
+        if (totalWeight < 1.0) { // Increased threshold to allow more spillover when data is sparse
             for (hourOffset in listOf(-1, 1)) {
                 val adjacentHour = (targetHour + hourOffset + 24) % 24
                 val adjacentEarnings = earningsMap[targetDay][adjacentHour]
                 
                 adjacentEarnings.forEach { earning ->
-                    val valueMultiplier = kotlin.math.sqrt(earning.amount) * 0.05 // Very low base for adjacent hours
+                    val valueMultiplier = (earning.amount / 10.0) * 0.1 // Adjacent influence also based on value
                     val editModeBoost = if (earning.isEditMode) 1.5 else 1.0
                     val weight = valueMultiplier * editModeBoost
                     
