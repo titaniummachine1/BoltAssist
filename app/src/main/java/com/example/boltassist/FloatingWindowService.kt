@@ -446,8 +446,9 @@ class FloatingWindowService : Service() {
         
         val menuY = buttonY
         
-        android.util.Log.d("BoltAssist", "SIMPLE MENU: buttonX=$buttonX, buttonCenterX=$buttonCenterX, screenCenterX=$screenCenterX")
-        android.util.Log.d("BoltAssist", "SIMPLE MENU: buttonLeft=${buttonCenterX < screenCenterX}, menuX=$menuX")
+        android.util.Log.d("BoltAssist", "MENU POSITIONING: buttonX=$buttonX, buttonCenterX=$buttonCenterX, screenCenterX=$screenCenterX")
+        android.util.Log.d("BoltAssist", "MENU POSITIONING: preferredX=$preferredMenuX, finalX=$menuX, screenWidth=$screenWidth")
+        android.util.Log.d("BoltAssist", "MENU POSITIONING: buttonLeft=${buttonCenterX < screenCenterX}, estimatedWidth=$estimatedMenuWidth")
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
