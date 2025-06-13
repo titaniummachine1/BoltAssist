@@ -46,6 +46,47 @@ data class KalmanState(
     val measurementNoise: Double = 4.0 // Account for variability in trip earnings
 )
 
+// ---------------- NEW NESTED JSON STRUCTURE SUPPORT ----------------
+data class TripInfo(
+    val id: String,
+    val durationMinutes: Int,
+    val earningsPLN: Int,
+    val isQuick: Boolean = false
+)
+
+data class TripEndpoint(
+    val time: String? = null,
+    val street: String = "Unknown",
+    val location: LocationData? = null
+)
+
+data class TripRecord(
+    val info: TripInfo,
+    val start: TripEndpoint? = null,
+    val end: TripEndpoint? = null
+)
+
+// Conversion helpers
+private fun TripData.toRecord(): TripRecord = TripRecord(
+    info = TripInfo(id, durationMinutes, earningsPLN, isQuick),
+    start = TripEndpoint(startTime, startStreet, startLocation),
+    end = TripEndpoint(endTime, endStreet, endLocation)
+)
+
+private fun TripRecord.toTripData(): TripData = TripData(
+    id = info.id,
+    startTime = start?.time ?: "",
+    endTime = end?.time,
+    durationMinutes = info.durationMinutes,
+    startStreet = start?.street ?: "Unknown",
+    endStreet = end?.street ?: "Unknown",
+    earningsPLN = info.earningsPLN,
+    startLocation = start?.location,
+    endLocation = end?.location,
+    isQuick = info.isQuick
+)
+// -------------------------------------------------------------------
+
 object TripManager {
     private lateinit var context: Context
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -318,8 +359,9 @@ object TripManager {
         val file = File(directory, "trips_database.json")
         
         try {
-            // Use in-memory cache for export
-            val json = gson.toJson(_tripsCache.sortedByDescending { it.startTime })
+            // Convert to new nested structure for better readability
+            val records = _tripsCache.sortedByDescending { it.startTime }.map { it.toRecord() }
+            val json = gson.toJson(records)
             file.writeText(json)
             android.util.Log.d("BoltAssist", "Saved ${tripsCache.size} trips to: ${file.absolutePath}")
         } catch (e: Exception) {
@@ -786,38 +828,30 @@ object TripManager {
 
     // ---------- Lenient JSON parser ----------
     private fun parseTripsLenient(json: String): List<TripData> {
-        val valid = mutableListOf<TripData>()
-        try {
-            val reader = com.google.gson.stream.JsonReader(java.io.StringReader(json))
-            reader.isLenient = true
-            // Expecting array root; if not, wrap single object
-            if (reader.peek() == com.google.gson.stream.JsonToken.BEGIN_ARRAY) {
-                reader.beginArray()
-                var idx = 0
-                while (reader.hasNext()) {
-                    try {
-                        val trip: TripData = gson.fromJson(reader, TripData::class.java)
-                        if (trip.startTime.isNotBlank()) valid.add(trip)
-                    } catch (e: Exception) {
-                        android.util.Log.w("BoltAssist", "LENIENT: skipping bad record #$idx", e)
-                        reader.skipValue()
-                    }
-                    idx++
-                }
-                reader.endArray()
+        val element = JsonParser.parseString(json)
+        if (element.isJsonArray) {
+            val arr = element.asJsonArray
+            if (arr.size() == 0) return emptyList()
+            val firstObj = arr[0].asJsonObject
+            val useNew = firstObj.has("info")
+
+            return if (useNew) {
+                // New structure
+                gson.fromJson(json, Array<TripRecord>::class.java).map { it.toTripData() }
             } else {
-                // Try single object
-                try {
-                    val trip: TripData = gson.fromJson(reader, TripData::class.java)
-                    if (trip.startTime.isNotBlank()) valid.add(trip)
-                } catch (e: Exception) {
-                    android.util.Log.e("BoltAssist", "LENIENT: single object parse failed", e)
-                }
+                // Old flat TripData array
+                gson.fromJson(json, Array<TripData>::class.java).toList()
             }
-        } catch (e: Exception) {
-            android.util.Log.e("BoltAssist", "LENIENT: failed to parse JSON stream", e)
+        } else if (element.isJsonObject) {
+            // Single object – attempt both ways
+            val obj = element.asJsonObject
+            return if (obj.has("info")) {
+                listOf(gson.fromJson(obj, TripRecord::class.java).toTripData())
+            } else {
+                listOf(gson.fromJson(obj, TripData::class.java))
+            }
         }
-        return valid
+        return emptyList()
     }
 
     /**
