@@ -537,8 +537,8 @@ object TripManager {
         // Go to target day
         calendar.add(Calendar.DAY_OF_YEAR, day)
         
-        // Set target hour
-        calendar.set(Calendar.HOUR_OF_DAY, hour + 1) // +1 because grid hours are 1-24, not 0-23
+        // Set target hour directly (0-23). Grid displays 1-24 but index 0 represents 00:00–01:00.
+        calendar.set(Calendar.HOUR_OF_DAY, hour)
         calendar.set(Calendar.MINUTE, 0)
         calendar.set(Calendar.SECOND, 0)
         calendar.set(Calendar.MILLISECOND, 0)

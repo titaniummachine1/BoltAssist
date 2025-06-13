@@ -142,6 +142,7 @@ class FloatingWindowService : Service() {
             var initialY = 0
             var initialTouchX = 0f
             var initialTouchY = 0f
+            var isDragging = false
             
             setOnTouchListener { _, event ->
                 when (event.action) {
@@ -152,8 +153,18 @@ class FloatingWindowService : Service() {
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
 
-                        // Show close target when drag starts
-                        closeTargetView?.visibility = View.VISIBLE
+                        // Determine when drag actually starts (>10 px move)
+                        if (!isDragging) {
+                            val moveDist = kotlin.math.hypot(
+                                (event.rawX - initialTouchX).toDouble(),
+                                (event.rawY - initialTouchY).toDouble()
+                            )
+                            if (moveDist > 10) {
+                                isDragging = true
+                                closeTargetView?.visibility = View.VISIBLE
+                            }
+                        }
+
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -392,6 +403,32 @@ class FloatingWindowService : Service() {
         val screenWidth = resources.displayMetrics.widthPixels
         val screenHeight = resources.displayMetrics.heightPixels
         
+        val menuWidth = 250 // px – fixed width for expanded controls
+        val edgeDpGap = (resources.displayMetrics.density * 10).toInt() // 10 dp universal margin
+
+        // Decide side based purely on bubble centre relative to screen centre.
+        val bubbleLeft = floatingParams?.x ?: 0
+        val bubbleCenterX = bubbleLeft + 50 // bubble width is 100 px
+        val isLeftSide = bubbleCenterX < screenWidth / 2
+
+        var x = if (isLeftSide) {
+            // Bubble on left → menu to its right with 10 px gap
+            (floatingParams?.x ?: 0) + 100 + 10
+        } else {
+            // Bubble on right → menu to its left with 10 px gap
+            (floatingParams?.x ?: 0) - menuWidth - 10
+        }
+
+        // Clamp so menu keeps edge gap at all times
+        if (x < edgeDpGap) x = edgeDpGap
+        if (x + menuWidth > screenWidth - edgeDpGap) x = screenWidth - menuWidth - edgeDpGap
+
+        // Align vertically with floating button
+        var y = floatingParams?.y ?: 0
+        
+        if (y < 0) y = 10
+        if (y + 200 > screenHeight) y = screenHeight - 210
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -405,43 +442,8 @@ class FloatingWindowService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            
-            val menuWidth = 250 // centralised so available to all calculations
-            val edgeDpGap = (resources.displayMetrics.density * 10).toInt() // 10dp universal side gap
-            
-            // Position menu next to floating button, on the side closer to screen center
-            if (floatingParams != null) {
-                val floatingX = floatingParams.x
-                val floatingY = floatingParams.y
-                val floatingWidth = 100 // floating button width
-                
-                val bubbleCenterX = floatingX + floatingWidth / 2
-
-                if (bubbleCenterX < screenWidth / 2) {
-                    // Bubble on left half – place menu to its right
-                    x = floatingX + floatingWidth + 10
-                } else {
-                    // Bubble on right half – place menu to its left
-                    x = floatingX - menuWidth - 10 // 10px gap between bubble and menu
-                    // Ensure it never hugs the screen edge
-                    if (x + menuWidth > screenWidth - edgeDpGap) {
-                        x = screenWidth - menuWidth - edgeDpGap
-                    }
-                    if (x < edgeDpGap) x = edgeDpGap // extreme corner case
-                }
-                
-                // Align vertically with floating button
-                y = floatingY
-                
-                if (x < edgeDpGap) x = edgeDpGap
-                if (x + menuWidth > screenWidth - edgeDpGap) x = screenWidth - menuWidth - edgeDpGap
-                if (y < 0) y = 10
-                if (y + 200 > screenHeight) y = screenHeight - 210
-            } else {
-                // Fallback positioning if floating button params not available
-                x = screenWidth / 2 - menuWidth / 2
-                y = screenHeight / 2 - 100
-            }
+            x = x
+            y = y
         }
         
         expandedView = layout

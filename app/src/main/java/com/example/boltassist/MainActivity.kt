@@ -433,7 +433,12 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
             }
         }
     }
-    // Compute header index for highlighting (hour is now 0-23, same as index)
+    // Compute header index for highlighting – direct mapping 0-23.
+    // The header shows labels 1-24, where label 1 represents 00:00-01:00, label 2 represents
+    // 01:00-02:00, …, label 24 represents 23:00-24:00.  Therefore the calendar hour (0-23)
+    // can be used directly: hour 0 → column 0 (label 1), hour 10 → column 10 (label 11), etc.
+    // DO NOT shift this value; using raw 0-23 is the only alignment that works across the
+    // entire 24-hour cycle (midnight included).
     val highlightIndex = currentTime.second
 
     LaunchedEffect(dataVersion) {
