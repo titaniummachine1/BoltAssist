@@ -54,6 +54,10 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import androidx.compose.ui.viewinterop.AndroidView
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
@@ -286,9 +290,22 @@ fun GraphScreen(onStartFloatingWindow: () -> Unit, editMode: Boolean) {
 
 @Composable
 fun MapScreen() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Map tools coming soon…")
+    val context = LocalContext.current
+    val mapViewState = remember {
+        mutableStateOf(
+            MapView(context).apply {
+                setTileSource(TileSourceFactory.MAPNIK)
+                setMultiTouchControls(true)
+                controller.setZoom(12.0)
+                controller.setCenter(GeoPoint(52.2297, 21.0122)) // Default to Warsaw
+            }
+        )
     }
+
+    AndroidView(
+        factory = { mapViewState.value },
+        modifier = Modifier.fillMaxSize()
+    )
 }
 
 @Composable

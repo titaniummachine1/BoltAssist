@@ -63,6 +63,9 @@ dependencies {
     // File Operations
     implementation 'androidx.documentfile:documentfile:1.0.1'
     
+    // OpenStreetMap SDK for Compose
+    implementation 'org.osmdroid:osmdroid-compose:6.1.18-compose'
+    
     // Testing
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
