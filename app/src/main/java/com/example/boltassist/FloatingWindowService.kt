@@ -409,49 +409,45 @@ class FloatingWindowService : Service() {
             )
         )
         
-        // Simple positioning: place menu next to the floating button
+        // IMPROVED positioning with proper bounds checking
         val floatingParams = floatingView?.layoutParams as? WindowManager.LayoutParams
         val screenWidth = resources.displayMetrics.widthPixels
         val screenHeight = resources.displayMetrics.heightPixels
         
-        val bubbleX = floatingParams?.x ?: 0
-        val bubbleY = floatingParams?.y ?: 0
-        val bubbleSize = 100 // floating button size
-        val gap = 20 // gap between button and menu
-        val menuWidth = 280 // estimated menu width (slightly larger for safety)
-        val edgeMargin = 10 // minimum margin from screen edge
+        val buttonX = floatingParams?.x ?: 0
+        val buttonY = floatingParams?.y ?: 0
+        val buttonSize = 100
+        val gap = 15
         
-        // Determine if bubble is on left or right side of screen
-        val bubbleCenterX = bubbleX + bubbleSize / 2
-        val isOnLeftSide = bubbleCenterX < screenWidth / 2
+        // Estimate menu width more accurately (based on typical button widths + padding)
+        val estimatedMenuWidth = 280 // More realistic estimate: buttons + padding
+        val screenCenterX = screenWidth / 2
+        val buttonCenterX = buttonX + buttonSize / 2
         
-        // Position menu on the opposite side to move toward center
-        var menuX = if (isOnLeftSide) {
-            // Bubble on left, menu goes to right
-            bubbleX + bubbleSize + gap
+        // Calculate preferred position, then clamp to screen bounds
+        val preferredMenuX = if (buttonCenterX < screenCenterX) {
+            // Button is on LEFT side, so menu goes RIGHT (toward center)
+            buttonX + buttonSize + gap
         } else {
-            // Bubble on right, menu goes to left
-            bubbleX - menuWidth - gap
+            // Button is on RIGHT side, so menu goes LEFT (toward center)  
+            buttonX - estimatedMenuWidth - gap
         }
         
-        // Ensure menu stays within screen bounds
-        if (menuX < edgeMargin) {
-            menuX = edgeMargin
-        } else if (menuX + menuWidth > screenWidth - edgeMargin) {
-            menuX = screenWidth - menuWidth - edgeMargin
-        }
+        // Clamp menu position to screen bounds with safety margins
+        val safetyMargin = 20
+        val menuX = when {
+            preferredMenuX < safetyMargin -> safetyMargin // Too far left
+            preferredMenuX + estimatedMenuWidth > screenWidth - safetyMargin -> {
+                // Too far right - position it to the left of button
+                buttonX - estimatedMenuWidth - gap
+            }
+            else -> preferredMenuX // Position is fine
+        }.coerceAtLeast(safetyMargin) // Final safety check
         
-        // Align menu vertically with button
-        var menuY = bubbleY
+        val menuY = buttonY
         
-        // Ensure menu doesn't go off-screen vertically
-        if (menuY < edgeMargin) {
-            menuY = edgeMargin
-        } else if (menuY + 200 > screenHeight - edgeMargin) { // approximate menu height
-            menuY = screenHeight - 200 - edgeMargin
-        }
-        
-        android.util.Log.d("BoltAssist", "MENU: bubbleX=$bubbleX, isOnLeftSide=$isOnLeftSide, menuX=$menuX, screenWidth=$screenWidth")
+        android.util.Log.d("BoltAssist", "SIMPLE MENU: buttonX=$buttonX, buttonCenterX=$buttonCenterX, screenCenterX=$screenCenterX")
+        android.util.Log.d("BoltAssist", "SIMPLE MENU: buttonLeft=${buttonCenterX < screenCenterX}, menuX=$menuX")
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
