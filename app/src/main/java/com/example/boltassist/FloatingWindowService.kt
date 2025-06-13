@@ -595,24 +595,17 @@ class FloatingWindowService : Service() {
      * 0.1-PLN units (internal representation).
      */
     private fun computeSuggestedEarnings(): Int {
-        val calendar = java.util.Calendar.getInstance()
-        val currentHour = calendar.get(java.util.Calendar.HOUR_OF_DAY)
-
+        // Consider the most recent 10 completed trips (with earnings > 0 PLN)
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
 
-        val matching = TripManager.tripsCache.filter { it.endTime != null && it.earningsPLN > 0 }.mapNotNull { trip ->
-            try {
-                val date = dateFormat.parse(trip.startTime)
-                calendar.time = date
-                val h = calendar.get(java.util.Calendar.HOUR_OF_DAY)
-                if (h == currentHour) trip.earningsPLN else null
-            } catch (_: Exception) { null }
-        }
+        val recent = TripManager.tripsCache
+            .filter { it.endTime != null && it.earningsPLN > 0 }
+            .sortedByDescending { it.endTime ?: it.startTime }
+            .take(10)
 
-        if (matching.isEmpty()) return 100 // 10 PLN default in 0.1 units
+        if (recent.isEmpty()) return 100 // 10 PLN default (0.1 units)
 
-        // Build frequency map and pick the mode (in case of tie choose lower earnings)
-        val modePln = matching.groupingBy { it }.eachCount()
+        val modePln = recent.groupingBy { it.earningsPLN }.eachCount()
             .entries
             .maxWithOrNull(compareBy<Map.Entry<Int, Int>> { it.value }.thenBy { -it.key })
             ?.key ?: 10
