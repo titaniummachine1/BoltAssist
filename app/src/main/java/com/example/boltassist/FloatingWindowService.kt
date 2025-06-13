@@ -168,7 +168,9 @@ class FloatingWindowService : Service() {
                         val display = resources.displayMetrics
                         val screenWidth = display.widthPixels
                         val screenHeight = display.heightPixels
-                        val buttonSize = 100 // same as layout params size
+                        val buttonSize = 100 // same as layout params size in px
+
+                        val edgeGapPx = (resources.displayMetrics.density * 5).toInt() // 5dp visual gap
 
                         val deltaX = abs(event.rawX - initialTouchX)
                         val deltaY = abs(event.rawY - initialTouchY)
@@ -192,7 +194,7 @@ class FloatingWindowService : Service() {
                                     (bubbleCenterY - targetCenterY).toDouble()
                                 )
 
-                                if (dist < buttonSize) {
+                                if (dist < buttonSize * 2.5) { // larger tolerance (~5× radius)
                                     // Dropped on X – exit
                                     stopSelf()
                                     consumed = true
@@ -202,10 +204,14 @@ class FloatingWindowService : Service() {
 
                         if (!consumed) {
                             if (wasTap) {
-                                toggleExpanded()
+                            toggleExpanded()
                             } else {
-                                // ----- Edge-snap behaviour -----
-                                params.x = if (params.x + buttonSize / 2 < screenWidth / 2) 0 else screenWidth - buttonSize
+                                // ----- Edge-snap with small gap -----
+                                params.x = if (params.x + buttonSize / 2 < screenWidth / 2) {
+                                    edgeGapPx
+                                } else {
+                                    screenWidth - buttonSize - edgeGapPx
+                                }
 
                                 // Clamp Y inside screen bounds
                                 if (params.y < 0) params.y = 0
@@ -400,35 +406,40 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             
+            val menuWidth = 250 // centralised so available to all calculations
+            val edgeDpGap = (resources.displayMetrics.density * 10).toInt() // 10dp universal side gap
+            
             // Position menu next to floating button, on the side closer to screen center
             if (floatingParams != null) {
                 val floatingX = floatingParams.x
                 val floatingY = floatingParams.y
                 val floatingWidth = 100 // floating button width
                 
-                // Determine which side is closer to center
-                val distanceFromLeft = floatingX
-                val distanceFromRight = screenWidth - (floatingX + floatingWidth)
-                
-                if (distanceFromLeft < distanceFromRight) {
-                    // Floating button is on left side, show menu to the right
+                val bubbleCenterX = floatingX + floatingWidth / 2
+
+                if (bubbleCenterX < screenWidth / 2) {
+                    // Bubble on left half – place menu to its right
                     x = floatingX + floatingWidth + 10
                 } else {
-                    // Floating button is on right side, show menu to the left
-                    x = floatingX - 250 // approximate menu width
+                    // Bubble on right half – place menu to its left
+                    x = floatingX - menuWidth - 10 // 10px gap between bubble and menu
+                    // Ensure it never hugs the screen edge
+                    if (x + menuWidth > screenWidth - edgeDpGap) {
+                        x = screenWidth - menuWidth - edgeDpGap
+                    }
+                    if (x < edgeDpGap) x = edgeDpGap // extreme corner case
                 }
                 
                 // Align vertically with floating button
                 y = floatingY
                 
-                // Ensure menu doesn't go off screen
-                if (x < 0) x = 10
-                if (x + 250 > screenWidth) x = screenWidth - 260
+                if (x < edgeDpGap) x = edgeDpGap
+                if (x + menuWidth > screenWidth - edgeDpGap) x = screenWidth - menuWidth - edgeDpGap
                 if (y < 0) y = 10
                 if (y + 200 > screenHeight) y = screenHeight - 210
             } else {
                 // Fallback positioning if floating button params not available
-                x = screenWidth / 2 - 125
+                x = screenWidth / 2 - menuWidth / 2
                 y = screenHeight / 2 - 100
             }
         }
@@ -552,13 +563,15 @@ class FloatingWindowService : Service() {
                         val timeDiff = nowMillis - endMillis
                         if (timeDiff > 60_000) return@let false
                         val results = FloatArray(1)
-                        android.location.Location.distanceBetween(
-                            trip.endLocation!!.latitude,
-                            trip.endLocation!!.longitude,
-                            loc.latitude,
-                            loc.longitude,
-                            results
-                        )
+                        trip.endLocation?.let { endLoc ->
+                            android.location.Location.distanceBetween(
+                                endLoc.latitude,
+                                endLoc.longitude,
+                                loc.latitude,
+                                loc.longitude,
+                                results
+                            )
+                        }
                         results[0] <= 50f
                     } catch (_: Exception) { false }
                 } ?: false
