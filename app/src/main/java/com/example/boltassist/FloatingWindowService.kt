@@ -296,9 +296,6 @@ class FloatingWindowService : Service() {
                         lastEndedTripId = null
                         resumeButton?.visibility = View.GONE
                         resumeHandler.removeCallbacks(resumeVisibilityRunnable)
-                        // Reset entry field to a sensible default (dominant value for this hour)
-                        earnings = computeSuggestedEarnings()
-                        moneyDisplay?.text = "${earnings / 10.0} PLN"
                     }
                 }
             }
@@ -469,8 +466,8 @@ class FloatingWindowService : Service() {
             android.util.Log.d("BoltAssist", "FLOATING: Storage info: ${TripManager.getStorageInfo()}")
             
             isRecording = false
-            // Preserve the just-ended trip earnings so user can tweak before resuming
-            earnings = roundedPln * 10
+            // Reset entry field to the dominant (most common) earnings for this hour
+            earnings = computeSuggestedEarnings()
             moneyDisplay?.text = "${earnings / 10.0} PLN"
             
             // Store reference for possible resume and start countdown
@@ -592,9 +589,10 @@ class FloatingWindowService : Service() {
     }
 
     /**
-     * Calculate a default earning suggestion for the next trip. Uses the arithmetic
-     * mean of all completed trips whose *start* time falls within the current hour.
-     * If no data, returns 10 PLN. Value returned is in 0.1-PLN units.
+     * Calculate a default earning suggestion for the next trip based on the **mode** (dominanta)
+     * of historical earnings during the current hour. This avoids skew from occasional high-value
+     * trips. If no prior data exists for the hour, it falls back to 10 PLN.  Returned value is in
+     * 0.1-PLN units (internal representation).
      */
     private fun computeSuggestedEarnings(): Int {
         val calendar = java.util.Calendar.getInstance()
@@ -611,8 +609,14 @@ class FloatingWindowService : Service() {
             } catch (_: Exception) { null }
         }
 
-        val avg = matching.takeIf { it.isNotEmpty() }?.average() ?: 10.0
-        val floored = kotlin.math.floor(avg).toInt().coerceAtLeast(1)
-        return floored * 10 // convert PLN -> tenths
+        if (matching.isEmpty()) return 100 // 10 PLN default in 0.1 units
+
+        // Build frequency map and pick the mode (in case of tie choose lower earnings)
+        val modePln = matching.groupingBy { it }.eachCount()
+            .entries
+            .maxWithOrNull(compareBy<Map.Entry<Int, Int>> { it.value }.thenBy { -it.key })
+            ?.key ?: 10
+
+        return modePln * 10 // convert PLN -> tenths
     }
 } 
