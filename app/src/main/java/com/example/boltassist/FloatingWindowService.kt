@@ -152,8 +152,12 @@ class FloatingWindowService : Service() {
                         initialY = params.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
+                        isDragging = false // Reset drag state on new touch
 
-                        // Determine when drag actually starts (>10 px move)
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        // Detect when drag actually starts (>10 px move)
                         if (!isDragging) {
                             val moveDist = kotlin.math.hypot(
                                 (event.rawX - initialTouchX).toDouble(),
@@ -162,16 +166,19 @@ class FloatingWindowService : Service() {
                             if (moveDist > 10) {
                                 isDragging = true
                                 closeTargetView?.visibility = View.VISIBLE
+                                // Hide menu when dragging starts
+                                if (isExpanded) {
+                                    toggleExpanded()
+                                }
                             }
                         }
-
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val params = layoutParams as WindowManager.LayoutParams
-                        params.x = initialX + (event.rawX - initialTouchX).toInt()
-                        params.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager.updateViewLayout(this, params)
+                        
+                        if (isDragging) {
+                            val params = layoutParams as WindowManager.LayoutParams
+                            params.x = initialX + (event.rawX - initialTouchX).toInt()
+                            params.y = initialY + (event.rawY - initialTouchY).toInt()
+                            windowManager.updateViewLayout(this, params)
+                        }
                         true
                     }
                     MotionEvent.ACTION_UP -> {
@@ -215,7 +222,7 @@ class FloatingWindowService : Service() {
 
                         if (!consumed) {
                             if (wasTap) {
-                            toggleExpanded()
+                                toggleExpanded()
                             } else {
                                 // ----- Edge-snap with small gap -----
                                 params.x = if (params.x + buttonSize / 2 < screenWidth / 2) {
@@ -242,8 +249,8 @@ class FloatingWindowService : Service() {
         }
         
         val params = WindowManager.LayoutParams(
-            100, // 100px width (double the original 50px)
-            100, // 100px height (double the original 50px)
+            100, // width in px
+            100, // height in px
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
@@ -254,8 +261,12 @@ class FloatingWindowService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 100
-            y = 100
+
+            // Start near top-right with small gap
+            val edgeGapPx = (resources.displayMetrics.density * 15).toInt() // 15dp gap
+            val screenWidth = resources.displayMetrics.widthPixels
+            x = screenWidth - 100 - edgeGapPx
+            y = edgeGapPx
         }
         
         windowManager.addView(floatingView, params)
@@ -398,36 +409,31 @@ class FloatingWindowService : Service() {
             )
         )
         
-        // Position the menu next to the floating button, closer to screen center
+        // Simple positioning: place menu next to the floating button
         val floatingParams = floatingView?.layoutParams as? WindowManager.LayoutParams
         val screenWidth = resources.displayMetrics.widthPixels
         val screenHeight = resources.displayMetrics.heightPixels
         
-        val menuWidth = 250 // px – fixed width for expanded controls
-        val edgeDpGap = (resources.displayMetrics.density * 10).toInt() // 10 dp universal margin
-
-        // Decide side based purely on bubble centre relative to screen centre.
-        val bubbleLeft = floatingParams?.x ?: 0
-        val bubbleCenterX = bubbleLeft + 50 // bubble width is 100 px
-        val isLeftSide = bubbleCenterX < screenWidth / 2
-
-        var x = if (isLeftSide) {
-            // Bubble on left → menu to its right with 10 px gap
-            (floatingParams?.x ?: 0) + 100 + 10
-        } else {
-            // Bubble on right → menu to its left with 10 px gap
-            (floatingParams?.x ?: 0) - menuWidth - 10
-        }
-
-        // Clamp so menu keeps edge gap at all times
-        if (x < edgeDpGap) x = edgeDpGap
-        if (x + menuWidth > screenWidth - edgeDpGap) x = screenWidth - menuWidth - edgeDpGap
-
-        // Align vertically with floating button
-        var y = floatingParams?.y ?: 0
+        val bubbleX = floatingParams?.x ?: 0
+        val bubbleY = floatingParams?.y ?: 0
+        val bubbleSize = 100 // floating button size
+        val gap = 20 // gap between button and menu
         
-        if (y < 0) y = 10
-        if (y + 200 > screenHeight) y = screenHeight - 210
+        // Determine if bubble is on left or right side of screen
+        val bubbleCenterX = bubbleX + bubbleSize / 2
+        val isOnLeftSide = bubbleCenterX < screenWidth / 2
+        
+        // Position menu on the opposite side to move toward center
+        val menuX = if (isOnLeftSide) {
+            // Bubble on left, menu goes to right
+            bubbleX + bubbleSize + gap
+        } else {
+            // Bubble on right, menu goes to left (250 is approximate menu width)
+            bubbleX - 250 - gap
+        }
+        
+        // Align menu vertically with button
+        val menuY = bubbleY
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -442,8 +448,8 @@ class FloatingWindowService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = x
-            y = y
+            x = menuX
+            y = menuY
         }
         
         expandedView = layout
