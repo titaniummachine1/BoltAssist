@@ -418,22 +418,40 @@ class FloatingWindowService : Service() {
         val bubbleY = floatingParams?.y ?: 0
         val bubbleSize = 100 // floating button size
         val gap = 20 // gap between button and menu
+        val menuWidth = 280 // estimated menu width (slightly larger for safety)
+        val edgeMargin = 10 // minimum margin from screen edge
         
         // Determine if bubble is on left or right side of screen
         val bubbleCenterX = bubbleX + bubbleSize / 2
         val isOnLeftSide = bubbleCenterX < screenWidth / 2
         
         // Position menu on the opposite side to move toward center
-        val menuX = if (isOnLeftSide) {
+        var menuX = if (isOnLeftSide) {
             // Bubble on left, menu goes to right
             bubbleX + bubbleSize + gap
         } else {
-            // Bubble on right, menu goes to left (250 is approximate menu width)
-            bubbleX - 250 - gap
+            // Bubble on right, menu goes to left
+            bubbleX - menuWidth - gap
+        }
+        
+        // Ensure menu stays within screen bounds
+        if (menuX < edgeMargin) {
+            menuX = edgeMargin
+        } else if (menuX + menuWidth > screenWidth - edgeMargin) {
+            menuX = screenWidth - menuWidth - edgeMargin
         }
         
         // Align menu vertically with button
-        val menuY = bubbleY
+        var menuY = bubbleY
+        
+        // Ensure menu doesn't go off-screen vertically
+        if (menuY < edgeMargin) {
+            menuY = edgeMargin
+        } else if (menuY + 200 > screenHeight - edgeMargin) { // approximate menu height
+            menuY = screenHeight - 200 - edgeMargin
+        }
+        
+        android.util.Log.d("BoltAssist", "MENU: bubbleX=$bubbleX, isOnLeftSide=$isOnLeftSide, menuX=$menuX, screenWidth=$screenWidth")
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
