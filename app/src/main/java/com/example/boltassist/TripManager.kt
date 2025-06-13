@@ -27,7 +27,8 @@ data class TripData(
     val endStreet: String = "Unknown",
     val earningsPLN: Int = 0,
     val startLocation: LocationData? = null,
-    val endLocation: LocationData? = null
+    val endLocation: LocationData? = null,
+    val isQuick: Boolean = false // Flag for trips started & ended inside same minute
 )
 
 data class LocationData(
@@ -165,23 +166,63 @@ object TripManager {
     }
     
     fun startTrip(location: Location?): TripData {
-        tripStartTime = System.currentTimeMillis()
-        // Use EXACT same date format as test data
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        val startTime = dateFormat.format(Date())
-        
+        val now = Date()
+        val startTime = dateFormat.format(now)
+
+        // Check if we should merge with the most recent completed trip
+        val lastCompletedTrip = _tripsCache
+            .filter { it.endTime != null }
+            .maxByOrNull { it.endTime!! } // latest by endTime string compare works because same format
+
+        if (lastCompletedTrip != null && location != null && lastCompletedTrip.endLocation != null) {
+            try {
+                val lastEndMillis = dateFormat.parse(lastCompletedTrip.endTime!!)?.time ?: 0L
+                val timeDiff = now.time - lastEndMillis // milliseconds since last trip ended
+
+                val results = FloatArray(1)
+                Location.distanceBetween(
+                    lastCompletedTrip.endLocation.latitude,
+                    lastCompletedTrip.endLocation.longitude,
+                    location.latitude,
+                    location.longitude,
+                    results
+                )
+                val distance = results[0]
+
+                if (timeDiff <= 60_000 && distance <= 100f) {
+                    // Merge: reopen the last trip instead of creating a new one
+                    android.util.Log.d("BoltAssist", "Merging new START with previous trip ${lastCompletedTrip.id} (timeDiff=${timeDiff}ms, dist=${distance}m)")
+
+                    val index = _tripsCache.indexOfFirst { it.id == lastCompletedTrip.id }
+                    if (index != -1) {
+                        // Remove end information so it becomes an active trip again
+                        val reopened = lastCompletedTrip.copy(endTime = null, endLocation = null)
+                        _tripsCache[index] = reopened
+                        currentTrip = reopened
+                        tripStartTime = dateFormat.parse(reopened.startTime)?.time ?: now.time
+                        // No need to add to cache – already replaced
+                        return reopened
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("BoltAssist", "Failed merging with previous trip", e)
+            }
+        }
+
+        // Normal path – create a brand-new trip
+        tripStartTime = now.time
         currentTrip = TripData(
             startTime = startTime,
-            startLocation = location?.let { 
-                LocationData(it.latitude, it.longitude) 
+            startLocation = location?.let {
+                LocationData(it.latitude, it.longitude)
             },
-            startStreet = getStreetFromLocation(location) // TODO: Implement OSM reverse geocoding
+            startStreet = getStreetFromLocation(location)
         )
-        
-        // Immediately add the new trip to the cache and save it.
+
         _tripsCache.add(currentTrip!!)
         saveCacheAndNotify()
-        
+
         android.util.Log.d("BoltAssist", "Started and saved new trip: ${currentTrip!!.id}")
         return currentTrip!!
     }
@@ -194,14 +235,33 @@ object TripManager {
         val endTime = dateFormat.format(Date())
         val durationMinutes = ((System.currentTimeMillis() - tripStartTime) / 60000).toInt()
         
+        var adjustedStartTime = tripInProgress.startTime
+        var adjustedDuration = durationMinutes
+        var quickFlag = false
+
+        if (durationMinutes == 0) {
+            // Treat as forgotten start: backdate start by 5 minutes and mark quick
+            val endDate = dateFormat.parse(endTime)
+            endDate?.let {
+                val cal = Calendar.getInstance()
+                cal.time = it
+                cal.add(Calendar.MINUTE, -5)
+                adjustedStartTime = dateFormat.format(cal.time)
+                adjustedDuration = 5
+                quickFlag = true
+            }
+        }
+        
         val completedTrip = tripInProgress.copy(
+            startTime = adjustedStartTime,
             endTime = endTime,
-            durationMinutes = durationMinutes,
+            durationMinutes = adjustedDuration,
             earningsPLN = earnings,
             endLocation = location?.let { 
                 LocationData(it.latitude, it.longitude) 
             },
-            endStreet = getStreetFromLocation(location) // TODO: Implement OSM reverse geocoding
+            endStreet = getStreetFromLocation(location),
+            isQuick = quickFlag
         )
         
         // Find the original trip in the cache and update it

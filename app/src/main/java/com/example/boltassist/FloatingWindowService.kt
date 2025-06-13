@@ -405,6 +405,13 @@ class FloatingWindowService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
     
     override fun onDestroy() {
+        // Ensure any recording trip is properly ended before the service stops
+        if (isRecording) {
+            android.util.Log.d("BoltAssist", "FLOATING: Service destroying – auto-ending active trip.")
+            TripManager.stopTrip(currentLocation, earnings / 10)
+            isRecording = false
+        }
+
         super.onDestroy()
         TrafficDataManager.stopTracking()
         floatingView?.let { windowManager.removeView(it) }

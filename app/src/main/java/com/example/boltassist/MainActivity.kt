@@ -156,18 +156,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 ) {
-                    Scaffold(
-                        topBar = {
-                            CenterAlignedTopAppBar(
-                                navigationIcon = {
-                                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                        Icon(Icons.Filled.Menu, contentDescription = "Menu")
-                                    }
-                                },
-                                title = { }
-                            )
-                        }
-                    ) { inner ->
+                    Scaffold { inner ->
                         Box(Modifier.padding(inner)) {
                             when (selectedScreen) {
                                 Screen.Graph -> GraphScreen(
@@ -186,6 +175,11 @@ class MainActivity : ComponentActivity() {
                                         directoryPickerLauncher.launch(null)
                                     }
                                 )
+                            }
+                            
+                            // Menu button overlaid on top
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(Icons.Filled.Menu, contentDescription = "Menu")
                             }
                         }
                     }
@@ -454,7 +448,7 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "$hour",
+                            text = "${hour + 1}",
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.Black
@@ -559,7 +553,7 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "$hour",
+                                text = "${hour + 1}",
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.Black
