@@ -49,6 +49,11 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import android.location.LocationManager
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
@@ -81,6 +86,17 @@ class MainActivity : ComponentActivity() {
     ) { 
         if (canDrawOverlays()) {
             startFloatingWindow()
+        }
+    }
+    
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { perms ->
+        val granted = perms[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                      perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            // After permission granted retry starting floating window
+            startFloatingWindowWithChecks()
         }
     }
     
@@ -208,13 +224,37 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun startFloatingWindow() {
-        val intent = Intent(this, FloatingWindowService::class.java)
-        
-        // Pass the selected storage path to the service
-        selectedStoragePath?.let {
-            intent.putExtra("storage_path", it)
+        startFloatingWindowWithChecks()
+    }
+
+    // Ensures permission & GPS enabled before actually starting service
+    private fun startFloatingWindowWithChecks() {
+        // 1. Permission check
+        val fineGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!fineGranted && !coarseGranted) {
+            // request both permissions
+            locationPermissionLauncher.launch(arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ))
+            return
         }
-        
+
+        // 2. GPS / location services enabled check
+        val lm = getSystemService(LOCATION_SERVICE) as LocationManager
+        val gpsOn = lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+        if (!gpsOn) {
+            // Prompt user to enable location settings
+            try {
+                startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            } catch (_: Exception) {}
+            return
+        }
+
+        // All good – start service
+        val intent = Intent(this, FloatingWindowService::class.java)
+        selectedStoragePath?.let { intent.putExtra("storage_path", it) }
         startService(intent)
     }
 

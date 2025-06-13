@@ -20,6 +20,10 @@ import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.*
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import androidx.core.app.NotificationCompat
+import android.app.PendingIntent
 
 class FloatingWindowService : Service() {
     private lateinit var windowManager: WindowManager
@@ -32,6 +36,10 @@ class FloatingWindowService : Service() {
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var currentLocation: Location? = null
     private var moneyDisplay: TextView? = null
+    private val CHANNEL_ID = "resume_ride_channel"
+    private val NOTIF_ID = 1001
+    private val ACTION_RESUME_YES = "com.example.boltassist.RESUME_YES"
+    private val ACTION_RESUME_NO = "com.example.boltassist.RESUME_NO"
     
     override fun onCreate() {
         super.onCreate()
@@ -66,6 +74,28 @@ class FloatingWindowService : Service() {
             android.util.Log.w("BoltAssist", "FLOATING: Cache is empty, forcing reload from storage")
             TripManager.reloadFromFile()
             android.util.Log.d("BoltAssist", "FLOATING: After reload - cache size: ${TripManager.tripsCache.size}")
+        }
+        
+        when (intent?.action) {
+            ACTION_RESUME_YES -> {
+                val tripId = intent.getStringExtra("trip_id") ?: return START_STICKY
+                val reopened = TripManager.resumeTrip(tripId)
+                reopened?.let {
+                    isRecording = true
+                    earnings = it.earningsPLN * 10 // convert to internal tenths representation
+                    moneyDisplay?.text = "${earnings / 10.0} PLN"
+                }
+                // dismiss notification
+                (getSystemService(NOTIFICATION_SERVICE) as? NotificationManager)?.cancel(NOTIF_ID)
+                return START_STICKY
+            }
+            ACTION_RESUME_NO -> {
+                // user rejected resume – start fresh without merge
+                currentLocation?.let { TripManager.startTrip(it, allowMerge = false) }
+                isRecording = true
+                (getSystemService(NOTIFICATION_SERVICE) as? NotificationManager)?.cancel(NOTIF_ID)
+                return START_STICKY
+            }
         }
         
         return START_STICKY
@@ -391,15 +421,80 @@ class FloatingWindowService : Service() {
             // Update display if expanded view is open
             moneyDisplay?.text = "${earnings / 10.0} PLN"
         } else {
-            // Start recording
+            // Check if we should offer to resume previous trip instead of auto-merging
+            currentLocation?.let { loc ->
+                val candidate = TripManager.tripsCache
+                    .filter { it.endTime != null && it.endLocation != null }
+                    .maxByOrNull { it.endTime!! }
+
+                val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                val nowMillis = System.currentTimeMillis()
+                val shouldPrompt = candidate?.let { trip ->
+                    try {
+                        val endMillis = dateFormat.parse(trip.endTime!!)?.time ?: return@let false
+                        val timeDiff = nowMillis - endMillis
+                        if (timeDiff > 60_000) return@let false
+                        val results = FloatArray(1)
+                        android.location.Location.distanceBetween(
+                            trip.endLocation!!.latitude,
+                            trip.endLocation!!.longitude,
+                            loc.latitude,
+                            loc.longitude,
+                            results
+                        )
+                        results[0] <= 50f
+                    } catch (_: Exception) { false }
+                } ?: false
+
+                if (shouldPrompt && candidate != null) {
+                    showResumeNotification(candidate)
+                    // Wait for user decision; do NOT start a new trip yet
+                    return
+                }
+            }
+
             android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation")
             android.util.Log.d("BoltAssist", "FLOATING: Current system time: ${TripManager.getCurrentTimeString()}")
             android.util.Log.d("BoltAssist", "FLOATING: Cache size before starting trip: ${TripManager.tripsCache.size}")
-            
-            val startedTrip = TripManager.startTrip(currentLocation)
+
+            val startedTrip = TripManager.startTrip(currentLocation, allowMerge = false)
             android.util.Log.d("BoltAssist", "FLOATING: Trip started: $startedTrip")
             isRecording = true
         }
+    }
+    
+    /**
+     * Creates (if needed) the notification channel and shows a resume-ride notification.
+     */
+    private fun showResumeNotification(trip: TripData) {
+        val mgr = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && mgr.getNotificationChannel(CHANNEL_ID) == null) {
+            val channel = NotificationChannel(CHANNEL_ID, "Resume Ride", NotificationManager.IMPORTANCE_HIGH)
+            mgr.createNotificationChannel(channel)
+        }
+
+        val yesIntent = Intent(this, FloatingWindowService::class.java).apply {
+            action = ACTION_RESUME_YES
+            putExtra("trip_id", trip.id)
+        }
+        val noIntent = Intent(this, FloatingWindowService::class.java).apply { action = ACTION_RESUME_NO }
+
+        val yesPending = PendingIntent.getService(
+            this, 2001, yesIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val noPending = PendingIntent.getService(
+            this, 2002, noIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Resume prior ride?")
+            .setContentText("You stopped less than a minute ago. Continue the same trip?")
+            .setAutoCancel(true)
+            .addAction(android.R.drawable.checkbox_on_background, "Yes", yesPending)
+            .addAction(android.R.drawable.ic_delete, "No", noPending)
+
+        mgr.notify(NOTIF_ID, builder.build())
     }
     
     override fun onBind(intent: Intent?): IBinder? = null

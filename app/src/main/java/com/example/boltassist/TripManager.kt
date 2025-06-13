@@ -166,48 +166,50 @@ object TripManager {
         }
     }
     
-    fun startTrip(location: Location?): TripData {
+    fun startTrip(location: Location?, allowMerge: Boolean = true): TripData {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val now = Date()
         val startTime = dateFormat.format(now)
 
-        // Check if we should merge with the most recent completed trip
-        val lastCompletedTrip = _tripsCache
-            .filter { it.endTime != null }
-            .maxByOrNull { it.endTime!! } // latest by endTime string compare works because same format
+        if (allowMerge) {
+            // Check if we should merge with the most recent completed trip
+            val lastCompletedTrip = _tripsCache
+                .filter { it.endTime != null }
+                .maxByOrNull { it.endTime!! } // latest by endTime string compare works because same format
 
-        if (lastCompletedTrip != null && location != null && lastCompletedTrip.endLocation != null) {
-            try {
-                val lastEndMillis = dateFormat.parse(lastCompletedTrip.endTime!!)?.time ?: 0L
-                val timeDiff = now.time - lastEndMillis // milliseconds since last trip ended
+            if (lastCompletedTrip != null && location != null && lastCompletedTrip.endLocation != null) {
+                try {
+                    val lastEndMillis = dateFormat.parse(lastCompletedTrip.endTime!!)?.time ?: 0L
+                    val timeDiff = now.time - lastEndMillis // milliseconds since last trip ended
 
-                val results = FloatArray(1)
-                Location.distanceBetween(
-                    lastCompletedTrip.endLocation.latitude,
-                    lastCompletedTrip.endLocation.longitude,
-                    location.latitude,
-                    location.longitude,
-                    results
-                )
-                val distance = results[0]
+                    val results = FloatArray(1)
+                    Location.distanceBetween(
+                        lastCompletedTrip.endLocation.latitude,
+                        lastCompletedTrip.endLocation.longitude,
+                        location.latitude,
+                        location.longitude,
+                        results
+                    )
+                    val distance = results[0]
 
-                if (timeDiff <= 60_000 && distance <= 100f) {
-                    // Merge: reopen the last trip instead of creating a new one
-                    android.util.Log.d("BoltAssist", "Merging new START with previous trip ${lastCompletedTrip.id} (timeDiff=${timeDiff}ms, dist=${distance}m)")
+                    if (timeDiff <= 60_000 && distance <= 100f) {
+                        // Merge: reopen the last trip instead of creating a new one
+                        android.util.Log.d("BoltAssist", "Merging new START with previous trip ${lastCompletedTrip.id} (timeDiff=${timeDiff}ms, dist=${distance}m)")
 
-                    val index = _tripsCache.indexOfFirst { it.id == lastCompletedTrip.id }
-                    if (index != -1) {
-                        // Remove end information so it becomes an active trip again
-                        val reopened = lastCompletedTrip.copy(endTime = null, endLocation = null)
-                        _tripsCache[index] = reopened
-                        currentTrip = reopened
-                        tripStartTime = dateFormat.parse(reopened.startTime)?.time ?: now.time
-                        // No need to add to cache – already replaced
-                        return reopened
+                        val index = _tripsCache.indexOfFirst { it.id == lastCompletedTrip.id }
+                        if (index != -1) {
+                            // Remove end information so it becomes an active trip again
+                            val reopened = lastCompletedTrip.copy(endTime = null, endLocation = null)
+                            _tripsCache[index] = reopened
+                            currentTrip = reopened
+                            tripStartTime = dateFormat.parse(reopened.startTime)?.time ?: now.time
+                            // No need to add to cache – already replaced
+                            return reopened
+                        }
                     }
+                } catch (e: Exception) {
+                    android.util.Log.e("BoltAssist", "Failed merging with previous trip", e)
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("BoltAssist", "Failed merging with previous trip", e)
             }
         }
 
@@ -816,6 +818,30 @@ object TripManager {
             android.util.Log.e("BoltAssist", "LENIENT: failed to parse JSON stream", e)
         }
         return valid
+    }
+
+    /**
+     * Re-open (resume) the given completed trip so that it becomes the active one again.
+     * Returns the reopened instance or null if the trip couldn't be found / was already active.
+     */
+    fun resumeTrip(tripId: String): TripData? {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val index = _tripsCache.indexOfFirst { it.id == tripId }
+        if (index == -1) return null
+
+        val trip = _tripsCache[index]
+        if (trip.endTime == null) return trip // already active
+
+        val reopened = trip.copy(endTime = null, endLocation = null)
+        _tripsCache[index] = reopened
+        currentTrip = reopened
+        // Update start time reference for duration calculation
+        tripStartTime = try {
+            dateFormat.parse(reopened.startTime)?.time ?: System.currentTimeMillis()
+        } catch (_: Exception) {
+            System.currentTimeMillis()
+        }
+        return reopened
     }
 }
 
