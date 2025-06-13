@@ -40,6 +40,20 @@ class FloatingWindowService : Service() {
     private val NOTIF_ID = 1001
     private val ACTION_RESUME_YES = "com.example.boltassist.RESUME_YES"
     private val ACTION_RESUME_NO = "com.example.boltassist.RESUME_NO"
+    // --- In-memory resume-trip helper ---
+    private var lastEndedTripId: String? = null       // id of the most recently finished trip
+    private var lastEndedTimestamp: Long = 0L         // wall-clock millis when that trip ended
+    private var resumeButton: Button? = null          // lazily created in expanded menu
+    private val resumeHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val resumeVisibilityRunnable = object : Runnable {
+        override fun run() {
+            // Update visibility every second while within 60-second window
+            resumeButton?.visibility = if (shouldShowResume()) View.VISIBLE else View.GONE
+            if (resumeButton?.visibility == View.VISIBLE) {
+                resumeHandler.postDelayed(this, 1000)
+            }
+        }
+    }
     
     override fun onCreate() {
         super.onCreate()
@@ -257,7 +271,38 @@ class FloatingWindowService : Service() {
         moneyLayout.addView(minusButton, buttonParams)
         moneyLayout.addView(plusButton, buttonParams)
         
+        // ----- Optional RESUME button (appears for 1 minute after last trip ended) -----
+        resumeButton = Button(this).apply {
+            text = "RESUME"
+            textSize = 16f
+            visibility = View.GONE // default – will be toggled dynamically
+            setBackgroundColor(ContextCompat.getColor(this@FloatingWindowService, android.R.color.holo_orange_dark))
+            setTextColor(ContextCompat.getColor(this@FloatingWindowService, android.R.color.white))
+
+            setOnClickListener {
+                lastEndedTripId?.let { tripId ->
+                    val reopened = TripManager.resumeTrip(tripId)
+                    reopened?.let { trip ->
+                        // Adopt resumed state
+                        isRecording = true
+                        earnings = trip.earningsPLN * 10
+                        updateMoneyDisplay()
+                        // Update START/END button to reflect active recording
+                        startStopButton.text = "END"
+                        startStopButton.setBackgroundColor(
+                            ContextCompat.getColor(this@FloatingWindowService, android.R.color.holo_red_dark)
+                        )
+                        // Hide resume once used
+                        lastEndedTripId = null
+                        resumeButton?.visibility = View.GONE
+                        resumeHandler.removeCallbacks(resumeVisibilityRunnable)
+                    }
+                }
+            }
+        }
+        
         layout.addView(startStopButton)
+        layout.addView(resumeButton!!)
         layout.addView(moneyDisplay!!)
         // Ensure money controls span full width
         layout.addView(
@@ -343,6 +388,9 @@ class FloatingWindowService : Service() {
         )
         
         windowManager.addView(expandedView, params)
+        
+        // Kick off visibility updates for resume button, if needed
+        updateResumeButtonVisibility()
     }
     
     private fun startLocationUpdates() {
@@ -420,6 +468,13 @@ class FloatingWindowService : Service() {
             earnings = 50 // back to default 5 PLN for next trip
             // Update display if expanded view is open
             moneyDisplay?.text = "${earnings / 10.0} PLN"
+            
+            // Store reference for possible resume and start countdown
+            completedTrip?.let {
+                lastEndedTripId = it.id
+                lastEndedTimestamp = System.currentTimeMillis()
+                updateResumeButtonVisibility()
+            }
         } else {
             // Check if we should offer to resume previous trip instead of auto-merging
             currentLocation?.let { loc ->
@@ -456,7 +511,7 @@ class FloatingWindowService : Service() {
             android.util.Log.d("BoltAssist", "FLOATING: Starting new trip with location: $currentLocation")
             android.util.Log.d("BoltAssist", "FLOATING: Current system time: ${TripManager.getCurrentTimeString()}")
             android.util.Log.d("BoltAssist", "FLOATING: Cache size before starting trip: ${TripManager.tripsCache.size}")
-
+            
             val startedTrip = TripManager.startTrip(currentLocation, allowMerge = false)
             android.util.Log.d("BoltAssist", "FLOATING: Trip started: $startedTrip")
             isRecording = true
@@ -511,5 +566,24 @@ class FloatingWindowService : Service() {
         TrafficDataManager.stopTracking()
         floatingView?.let { windowManager.removeView(it) }
         expandedView?.let { windowManager.removeView(it) }
+    }
+    
+    /** Determines if the RESUME button should be visible. */
+    private fun shouldShowResume(): Boolean {
+        val id = lastEndedTripId ?: return false
+        // Must still exist & still be within 60-second window
+        val withinWindow = (System.currentTimeMillis() - lastEndedTimestamp) < 60_000
+        val stillCompleted = TripManager.tripsCache.any { it.id == id && it.endTime != null }
+        return withinWindow && stillCompleted
+    }
+
+    private fun updateResumeButtonVisibility() {
+        resumeButton?.visibility = if (shouldShowResume()) View.VISIBLE else View.GONE
+        if (resumeButton?.visibility == View.VISIBLE) {
+            resumeHandler.removeCallbacks(resumeVisibilityRunnable)
+            resumeHandler.post(resumeVisibilityRunnable)
+        } else {
+            resumeHandler.removeCallbacks(resumeVisibilityRunnable)
+        }
     }
 } 
