@@ -17,6 +17,7 @@ import java.net.URL
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.google.gson.JsonParser
 
 data class TripData(
     val id: String = UUID.randomUUID().toString(),
@@ -355,9 +356,9 @@ object TripManager {
                 android.util.Log.w("BoltAssist", "LOAD: Trips file is blank, cache cleared.")
                 return
             }
-            val tripsArray = gson.fromJson(json, Array<TripData>::class.java)
+            val tripsArray = parseTripsLenient(json)
             
-            android.util.Log.d("BoltAssist", "LOAD: Parsed ${tripsArray.size} trips from JSON")
+            android.util.Log.d("BoltAssist", "LOAD: Parsed ${tripsArray.size} trips from JSON (lenient mode)")
             
             // Atomically update cache only after successful parse
             _tripsCache.clear()
@@ -368,9 +369,8 @@ object TripManager {
             android.util.Log.d("BoltAssist", "LOAD: Final cache size: ${_tripsCache.size}")
             
         } catch (e: Exception) {
-            android.util.Log.e("BoltAssist", "Failed to load trips from file, cache not cleared to prevent data loss.", e)
+            android.util.Log.e("BoltAssist", "Failed to load trips from file in lenient mode, cache not cleared to prevent data loss.", e)
             e.printStackTrace()
-            // If file is corrupted, we don't clear the cache, preventing data loss
         }
     }
     
@@ -603,7 +603,7 @@ object TripManager {
                         android.util.Log.w("BoltAssist", "LOAD: Trips file from URI is blank, cache cleared.")
                         return@use
                     }
-                    val tripsArray = gson.fromJson(json, Array<TripData>::class.java)
+                    val tripsArray = parseTripsLenient(json)
                     
                     // Atomically update cache only after successful parse
                     _tripsCache.clear()
@@ -781,6 +781,27 @@ object TripManager {
     
     // Note: Switched from complex Kalman filter to simpler holiday-aware historical averaging
     // This provides more intuitive and predictable results for week-to-week earnings patterns
+
+    // ---------- Lenient JSON parser ----------
+    private fun parseTripsLenient(json: String): List<TripData> {
+        val valid = mutableListOf<TripData>()
+        try {
+            val root = JsonParser.parseString(json)
+            if (root.isJsonArray) {
+                root.asJsonArray.forEachIndexed { idx, el ->
+                    try {
+                        val trip = gson.fromJson(el, TripData::class.java)
+                        if (!trip.startTime.isNullOrBlank()) valid.add(trip)
+                    } catch (e: Exception) {
+                        android.util.Log.w("BoltAssist", "LENIENT: skipping bad record #$idx", e)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "LENIENT: failed to parse", e)
+        }
+        return valid
+    }
 }
 
  
