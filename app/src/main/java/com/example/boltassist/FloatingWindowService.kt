@@ -24,6 +24,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import androidx.core.app.NotificationCompat
 import android.app.PendingIntent
+import kotlin.math.abs
 
 class FloatingWindowService : Service() {
     private lateinit var windowManager: WindowManager
@@ -57,6 +58,9 @@ class FloatingWindowService : Service() {
     // lightweight persistor
     private val prefs by lazy { getSharedPreferences("FloatingService", MODE_PRIVATE) }
     
+    // ----- Close target (red X at bottom-centre) -----
+    private var closeTargetView: View? = null
+    
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -80,6 +84,9 @@ class FloatingWindowService : Service() {
         
         startLocationUpdates()
         createFloatingWindow()
+        
+        // Prepare hidden close target overlay
+        createCloseTarget()
         
         // Restore persisted resume/active-trip information (crash-resilience)
         restorePersistedState()
@@ -144,6 +151,9 @@ class FloatingWindowService : Service() {
                         initialY = params.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
+
+                        // Show close target when drag starts
+                        closeTargetView?.visibility = View.VISIBLE
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -154,12 +164,59 @@ class FloatingWindowService : Service() {
                         true
                     }
                     MotionEvent.ACTION_UP -> {
-                        // Only toggle if it was a tap, not a drag
-                        val deltaX = Math.abs(event.rawX - initialTouchX)
-                        val deltaY = Math.abs(event.rawY - initialTouchY)
-                        if (deltaX < 10 && deltaY < 10) {
-                            toggleExpanded()
+                        val params = layoutParams as WindowManager.LayoutParams
+                        val display = resources.displayMetrics
+                        val screenWidth = display.widthPixels
+                        val screenHeight = display.heightPixels
+                        val buttonSize = 100 // same as layout params size
+
+                        val deltaX = abs(event.rawX - initialTouchX)
+                        val deltaY = abs(event.rawY - initialTouchY)
+
+                        val wasTap = deltaX < 10 && deltaY < 10
+
+                        var consumed = false
+
+                        if (!wasTap) {
+                            // Check proximity to close target
+                            closeTargetView?.let { target ->
+                                val targetParams = target.layoutParams as WindowManager.LayoutParams
+                                val targetCenterX = screenWidth / 2
+                                val targetCenterY = screenHeight - targetParams.y - (target.height / 2)
+
+                                val bubbleCenterX = params.x + buttonSize / 2
+                                val bubbleCenterY = params.y + buttonSize / 2
+
+                                val dist = kotlin.math.hypot(
+                                    (bubbleCenterX - targetCenterX).toDouble(),
+                                    (bubbleCenterY - targetCenterY).toDouble()
+                                )
+
+                                if (dist < buttonSize) {
+                                    // Dropped on X – exit
+                                    stopSelf()
+                                    consumed = true
+                                }
+                            }
                         }
+
+                        if (!consumed) {
+                            if (wasTap) {
+                                toggleExpanded()
+                            } else {
+                                // ----- Edge-snap behaviour -----
+                                params.x = if (params.x + buttonSize / 2 < screenWidth / 2) 0 else screenWidth - buttonSize
+
+                                // Clamp Y inside screen bounds
+                                if (params.y < 0) params.y = 0
+                                if (params.y > screenHeight - buttonSize) params.y = screenHeight - buttonSize
+
+                                windowManager.updateViewLayout(this, params)
+                            }
+                        }
+
+                        // Hide close target after gesture ends
+                        closeTargetView?.visibility = View.GONE
                         true
                     }
                     else -> false
@@ -384,19 +441,6 @@ class FloatingWindowService : Service() {
                 true
             } else false
         }
-        // Exit button to stop the floating service
-        val exitButton = Button(this).apply {
-            text = "Exit"
-            textSize = 16f
-            setOnClickListener { stopSelf() }
-        }
-        layout.addView(
-            exitButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = 16 }
-        )
         
         windowManager.addView(expandedView, params)
         
@@ -654,5 +698,38 @@ class FloatingWindowService : Service() {
         } else {
             prefs.edit().remove("last_trip_id").remove("last_trip_time").apply()
         }
+    }
+
+    /** Creates the bottom-centre red X target (initially hidden). */
+    private fun createCloseTarget() {
+        val sizePx = (resources.displayMetrics.density * 80).toInt() // 80dp circle
+        closeTargetView = TextView(this).apply {
+            text = "✕"
+            textSize = 32f
+            gravity = Gravity.CENTER
+            setTextColor(ContextCompat.getColor(this@FloatingWindowService, android.R.color.white))
+            background = ContextCompat.getDrawable(this@FloatingWindowService, android.R.drawable.presence_busy)
+            // make it look like a red circle
+            background?.setTint(ContextCompat.getColor(this@FloatingWindowService, android.R.color.holo_red_dark))
+            visibility = View.GONE
+        }
+
+        val params = WindowManager.LayoutParams(
+            sizePx,
+            sizePx,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            },
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = (resources.displayMetrics.density * 40).toInt() // 40dp margin from bottom
+        }
+
+        windowManager.addView(closeTargetView, params)
     }
 } 

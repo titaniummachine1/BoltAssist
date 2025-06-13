@@ -106,6 +106,14 @@ object TripManager {
     private val kalmanStates = Array(7) { Array(24) { KalmanState() } }
     private var kalmanInitialized = false
     
+    /**
+     * Indicates whether the *most recently* parsed trips file was using the **legacy flat structure**.
+     * If true we will immediately re-save the file (in the same location/URI) using the current
+     * nested JSON format so subsequent loads are faster and the on-disk representation stays
+     * up-to-date.  This flag is only meaningful during the scope of a single load call.
+     */
+    private var lastParsedWasOldFormat: Boolean = false
+    
     fun isInitialized(): Boolean = ::context.isInitialized
     
     fun initialize(appContext: Context) {
@@ -409,6 +417,15 @@ object TripManager {
             _tripsCache.addAll(tripsArray)
             dataVersion++
             
+            // If we just loaded legacy data, immediately rewrite it using the new structure so that
+            // the on-disk copy is migrated without any extra user action.  This happens only once
+            // per load call.
+            if (lastParsedWasOldFormat) {
+                android.util.Log.d("BoltAssist", "LOAD: Detected legacy trip format – migrating to new nested structure")
+                saveAllTripsToFile()
+                lastParsedWasOldFormat = false
+            }
+            
             android.util.Log.d("BoltAssist", "LOAD: Added ${tripsArray.size} trips to cache.")
             android.util.Log.d("BoltAssist", "LOAD: Final cache size: ${_tripsCache.size}")
             
@@ -653,6 +670,13 @@ object TripManager {
                     _tripsCache.clear()
                     _tripsCache.addAll(tripsArray)
                     dataVersion++
+
+                    if (lastParsedWasOldFormat) {
+                        android.util.Log.d("BoltAssist", "LOAD URI: Detected legacy trip format – migrating to new nested structure")
+                        saveTripsToUri()
+                        lastParsedWasOldFormat = false
+                    }
+
                     android.util.Log.d("BoltAssist", "Loaded ${_tripsCache.size} trips from URI: $fileUri")
                 }
             } catch (e: Exception) {
@@ -835,6 +859,9 @@ object TripManager {
             val firstObj = arr[0].asJsonObject
             val useNew = firstObj.has("info")
 
+            // Remember whether we just parsed legacy data so that the caller can re-save.
+            lastParsedWasOldFormat = !useNew
+
             return if (useNew) {
                 // New structure
                 gson.fromJson(json, Array<TripRecord>::class.java).map { it.toTripData() }
@@ -845,6 +872,7 @@ object TripManager {
         } else if (element.isJsonObject) {
             // Single object – attempt both ways
             val obj = element.asJsonObject
+            lastParsedWasOldFormat = !obj.has("info")
             return if (obj.has("info")) {
                 listOf(gson.fromJson(obj, TripRecord::class.java).toTripData())
             } else {
