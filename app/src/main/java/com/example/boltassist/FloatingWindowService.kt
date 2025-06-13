@@ -54,6 +54,8 @@ class FloatingWindowService : Service() {
             }
         }
     }
+    // lightweight persistor
+    private val prefs by lazy { getSharedPreferences("FloatingService", MODE_PRIVATE) }
     
     override fun onCreate() {
         super.onCreate()
@@ -78,6 +80,9 @@ class FloatingWindowService : Service() {
         
         startLocationUpdates()
         createFloatingWindow()
+        
+        // Restore persisted resume/active-trip information (crash-resilience)
+        restorePersistedState()
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -296,6 +301,12 @@ class FloatingWindowService : Service() {
                         lastEndedTripId = null
                         resumeButton?.visibility = View.GONE
                         resumeHandler.removeCallbacks(resumeVisibilityRunnable)
+                        // Persist that we're recording again
+                        prefs.edit().apply {
+                            remove("last_trip_id"); remove("last_trip_time")
+                            putString("active_trip_id", trip.id)
+                            apply()
+                        }
                     }
                 }
             }
@@ -470,10 +481,16 @@ class FloatingWindowService : Service() {
             earnings = computeSuggestedEarnings()
             moneyDisplay?.text = "${earnings / 10.0} PLN"
             
-            // Store reference for possible resume and start countdown
+            // Persist state for possible resume (survives process death)
             completedTrip?.let {
                 lastEndedTripId = it.id
                 lastEndedTimestamp = System.currentTimeMillis()
+                prefs.edit().apply {
+                    remove("active_trip_id") // finished
+                    putString("last_trip_id", lastEndedTripId)
+                    putLong("last_trip_time", lastEndedTimestamp)
+                    apply()
+                }
                 updateResumeButtonVisibility()
             }
         } else {
@@ -514,6 +531,8 @@ class FloatingWindowService : Service() {
             android.util.Log.d("BoltAssist", "FLOATING: Cache size before starting trip: ${TripManager.tripsCache.size}")
             
             val startedTrip = TripManager.startTrip(currentLocation, allowMerge = false)
+            // Persist active-trip id for crash recovery
+            prefs.edit().putString("active_trip_id", startedTrip.id).apply()
             android.util.Log.d("BoltAssist", "FLOATING: Trip started: $startedTrip")
             isRecording = true
         }
@@ -590,8 +609,8 @@ class FloatingWindowService : Service() {
 
     /**
      * Calculate a default earning suggestion for the next trip based on the **mode** (dominanta)
-     * of historical earnings during the current hour. This avoids skew from occasional high-value
-     * trips. If no prior data exists for the hour, it falls back to 10 PLN.  Returned value is in
+     * of the most recent 10 trips to reduce skew from outliers. If no data exists it falls back to
+     * 10 PLN. Returned value is in
      * 0.1-PLN units (internal representation).
      */
     private fun computeSuggestedEarnings(): Int {
@@ -611,5 +630,29 @@ class FloatingWindowService : Service() {
             ?.key ?: 10
 
         return modePln * 10 // convert PLN -> tenths
+    }
+
+    /**
+     * Reads SharedPreferences to restore any in-flight or recently-ended trips so the
+     * service behaves as if it had never been killed.
+     */
+    private fun restorePersistedState() {
+        // Unfinished active trip? -> auto-resume recording
+        prefs.getString("active_trip_id", null)?.let { activeId ->
+            TripManager.resumeTrip(activeId)?.let { trip ->
+                isRecording = true
+                earnings = trip.earningsPLN * 10
+            } ?: prefs.edit().remove("active_trip_id").apply() // clean up stale id
+        }
+
+        // Recently ended trip – show RESUME if within 60 s
+        val lastId = prefs.getString("last_trip_id", null)
+        val lastTime = prefs.getLong("last_trip_time", 0L)
+        if (lastId != null && System.currentTimeMillis() - lastTime < 60_000) {
+            lastEndedTripId = lastId
+            lastEndedTimestamp = lastTime
+        } else {
+            prefs.edit().remove("last_trip_id").remove("last_trip_time").apply()
+        }
     }
 } 
