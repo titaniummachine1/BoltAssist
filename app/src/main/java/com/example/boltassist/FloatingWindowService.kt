@@ -573,11 +573,11 @@ class FloatingWindowService : Service() {
 
                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
                 val nowMillis = System.currentTimeMillis()
-                val shouldPrompt = candidate?.let { trip ->
+                val shouldPrompt = candidate?.let candidateCheck@ { trip ->
                     try {
-                        val endMillis = dateFormat.parse(trip.endTime!!)?.time ?: return@let false
+                        val endMillis = dateFormat.parse(trip.endTime!!)?.time ?: return@candidateCheck false
                         val timeDiff = nowMillis - endMillis
-                        if (timeDiff > 60_000) return@let false
+                        if (timeDiff > 60_000) return@candidateCheck false
                         val results = FloatArray(1)
                         trip.endLocation?.let { endLoc ->
                             android.location.Location.distanceBetween(
@@ -688,8 +688,6 @@ class FloatingWindowService : Service() {
      */
     private fun computeSuggestedEarnings(): Int {
         // Consider the most recent 10 completed trips (with earnings > 0 PLN)
-        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-
         val recent = TripManager.tripsCache
             .filter { it.endTime != null && it.earningsPLN > 0 }
             .sortedByDescending { it.endTime ?: it.startTime }

@@ -44,6 +44,9 @@ android {
             excludes += '/META-INF/{AL2.0,LGPL2.1}'
         }
     }
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
 }
 
 dependencies {
@@ -63,8 +66,8 @@ dependencies {
     // File Operations
     implementation 'androidx.documentfile:documentfile:1.0.1'
     
-    // OpenStreetMap SDK for Compose
-    implementation 'org.osmdroid:osmdroid-compose:6.1.18-compose'
+    // OpenStreetMap SDK
+    implementation 'org.osmdroid:osmdroid-android:6.1.18'
     
     // Testing
     testImplementation 'junit:junit:4.13.2'
