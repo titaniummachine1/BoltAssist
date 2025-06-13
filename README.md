@@ -1,5 +1,7 @@
 # BoltAssist
 
+![image](https://github.com/user-attachments/assets/15e4d317-db09-4e8f-b6b2-7d242da4e4fd)
+
 BoltAssist is a simple Android application built with Jetpack Compose. The default screen displays a greeting using the project's custom Material theme. The project is intended as a minimal template for experimenting with Compose.
 
 ## Prerequisites
