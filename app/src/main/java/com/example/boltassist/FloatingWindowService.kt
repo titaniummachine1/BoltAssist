@@ -24,6 +24,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import androidx.core.app.NotificationCompat
 import android.app.PendingIntent
+import android.animation.ValueAnimator
+import android.view.animation.DecelerateInterpolator
 import kotlin.math.abs
 
 class FloatingWindowService : Service() {
@@ -232,11 +234,10 @@ class FloatingWindowService : Service() {
                                     screenWidth - buttonSize - edgeGapPx
                                 }
 
-                                // Clamp Y inside screen bounds
-                                if (params.y < 0) params.y = 0
-                                if (params.y > screenHeight - buttonSize) params.y = screenHeight - buttonSize
-
-                                windowManager.updateViewLayout(this, params)
+                                // Clamp Y inside screen bounds before animating
+                                val endY = params.y.coerceIn(edgeGapPx, screenHeight - buttonSize - edgeGapPx)
+                                
+                                animateToPosition(params.x, params.x, params.y, endY)
                             }
                         }
 
@@ -249,7 +250,7 @@ class FloatingWindowService : Service() {
             }
         }
         
-        floatingButtonSizePx = (65 * resources.displayMetrics.density).toInt() // 65dp size
+        floatingButtonSizePx = (49 * resources.displayMetrics.density).toInt() // Was 65dp, now ~25% smaller
         val params = WindowManager.LayoutParams(
             floatingButtonSizePx, // width in px
             floatingButtonSizePx, // height in px
@@ -264,11 +265,11 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
 
-            // Start near top-right with small gap
-            val edgeGapPx = (resources.displayMetrics.density * 15).toInt() // 15dp gap
+            // Start snapped to the right edge with a small gap
             val screenWidth = resources.displayMetrics.widthPixels
-            x = screenWidth - 100 - edgeGapPx
-            y = edgeGapPx
+            val edgeGapPx = (5 * resources.displayMetrics.density).toInt() // 5dp gap
+            x = screenWidth - floatingButtonSizePx - edgeGapPx
+            y = (15 * resources.displayMetrics.density).toInt() // 15dp from top
         }
         
         windowManager.addView(floatingView, params)
@@ -759,5 +760,22 @@ class FloatingWindowService : Service() {
         }
 
         windowManager.addView(closeTargetView, params)
+    }
+
+    private fun animateToPosition(startX: Int, endX: Int, startY: Int, endY: Int) {
+        val animator = ValueAnimator.ofFloat(0f, 1f)
+        animator.duration = 200 // 200ms animation
+        animator.interpolator = DecelerateInterpolator()
+
+        animator.addUpdateListener { animation ->
+            val fraction = animation.animatedFraction
+            val params = floatingView?.layoutParams as? WindowManager.LayoutParams
+            if (params != null && floatingView?.isAttachedToWindow == true) {
+                params.x = (startX + (endX - startX) * fraction).toInt()
+                params.y = (startY + (endY - startY) * fraction).toInt()
+                windowManager.updateViewLayout(floatingView, params)
+            }
+        }
+        animator.start()
     }
 } 
