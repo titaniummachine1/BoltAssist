@@ -448,7 +448,7 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "${hour + 1}",
+                            text = "$hour",
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.Black
@@ -553,7 +553,7 @@ fun WeeklyEarningsGrid(editMode: Boolean = false) {
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "${hour + 1}",
+                                text = "$hour",
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.Black

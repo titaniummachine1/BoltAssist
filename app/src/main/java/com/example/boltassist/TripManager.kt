@@ -786,19 +786,34 @@ object TripManager {
     private fun parseTripsLenient(json: String): List<TripData> {
         val valid = mutableListOf<TripData>()
         try {
-            val root = JsonParser.parseString(json)
-            if (root.isJsonArray) {
-                root.asJsonArray.forEachIndexed { idx, el ->
+            val reader = com.google.gson.stream.JsonReader(java.io.StringReader(json))
+            reader.isLenient = true
+            // Expecting array root; if not, wrap single object
+            if (reader.peek() == com.google.gson.stream.JsonToken.BEGIN_ARRAY) {
+                reader.beginArray()
+                var idx = 0
+                while (reader.hasNext()) {
                     try {
-                        val trip = gson.fromJson(el, TripData::class.java)
-                        if (!trip.startTime.isNullOrBlank()) valid.add(trip)
+                        val trip: TripData = gson.fromJson(reader, TripData::class.java)
+                        if (trip.startTime.isNotBlank()) valid.add(trip)
                     } catch (e: Exception) {
                         android.util.Log.w("BoltAssist", "LENIENT: skipping bad record #$idx", e)
+                        reader.skipValue()
                     }
+                    idx++
+                }
+                reader.endArray()
+            } else {
+                // Try single object
+                try {
+                    val trip: TripData = gson.fromJson(reader, TripData::class.java)
+                    if (trip.startTime.isNotBlank()) valid.add(trip)
+                } catch (e: Exception) {
+                    android.util.Log.e("BoltAssist", "LENIENT: single object parse failed", e)
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("BoltAssist", "LENIENT: failed to parse", e)
+            android.util.Log.e("BoltAssist", "LENIENT: failed to parse JSON stream", e)
         }
         return valid
     }
