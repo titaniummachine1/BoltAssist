@@ -31,6 +31,7 @@ class FloatingWindowService : Service() {
     private var floatingView: View? = null
     private var expandedView: View? = null
     private var isExpanded = false
+    private var floatingButtonSizePx: Int = 0
     // Earnings stored in tenths of PLN; default 5.0 PLN = 50
     private var earnings = 50
     private var isRecording = false
@@ -186,7 +187,7 @@ class FloatingWindowService : Service() {
                         val display = resources.displayMetrics
                         val screenWidth = display.widthPixels
                         val screenHeight = display.heightPixels
-                        val buttonSize = 100 // same as layout params size in px
+                        val buttonSize = floatingButtonSizePx // same as layout params size in px
 
                         val edgeGapPx = (resources.displayMetrics.density * 5).toInt() // 5dp visual gap
 
@@ -248,9 +249,10 @@ class FloatingWindowService : Service() {
             }
         }
         
+        floatingButtonSizePx = (65 * resources.displayMetrics.density).toInt() // 65dp size
         val params = WindowManager.LayoutParams(
-            100, // width in px
-            100, // height in px
+            floatingButtonSizePx, // width in px
+            floatingButtonSizePx, // height in px
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
@@ -409,49 +411,39 @@ class FloatingWindowService : Service() {
             )
         )
         
-        // IMPROVED positioning with proper bounds checking
+        // Use a fixed width for the menu for predictable positioning
+        val menuWidthPx = (240 * resources.displayMetrics.density).toInt() // 240dp fixed width
         val floatingParams = floatingView?.layoutParams as? WindowManager.LayoutParams
         val screenWidth = resources.displayMetrics.widthPixels
         val screenHeight = resources.displayMetrics.heightPixels
-        
+
         val buttonX = floatingParams?.x ?: 0
         val buttonY = floatingParams?.y ?: 0
-        val buttonSize = 100
-        val gap = 15
-        
-        // Estimate menu width more accurately (based on typical button widths + padding)
-        val estimatedMenuWidth = 280 // More realistic estimate: buttons + padding
+        val buttonSize = floatingButtonSizePx
+        val gap = (8 * resources.displayMetrics.density).toInt() // 8dp gap
+
         val screenCenterX = screenWidth / 2
         val buttonCenterX = buttonX + buttonSize / 2
         
-        // Calculate preferred position, then clamp to screen bounds
-        val preferredMenuX = if (buttonCenterX < screenCenterX) {
-            // Button is on LEFT side, so menu goes RIGHT (toward center)
+        // Position menu to the left or right of the button
+        val menuX = if (buttonCenterX < screenCenterX) {
+            // Button on left -> Menu on right
             buttonX + buttonSize + gap
         } else {
-            // Button is on RIGHT side, so menu goes LEFT (toward center)  
-            buttonX - estimatedMenuWidth - gap
+            // Button on right -> Menu on left
+            buttonX - menuWidthPx - gap
         }
         
-        // Clamp menu position to screen bounds with safety margins
-        val safetyMargin = 20
-        val menuX = when {
-            preferredMenuX < safetyMargin -> safetyMargin // Too far left
-            preferredMenuX + estimatedMenuWidth > screenWidth - safetyMargin -> {
-                // Too far right - position it to the left of button
-                buttonX - estimatedMenuWidth - gap
-            }
-            else -> preferredMenuX // Position is fine
-        }.coerceAtLeast(safetyMargin) // Final safety check
-        
-        val menuY = buttonY
-        
-        android.util.Log.d("BoltAssist", "MENU POSITIONING: buttonX=$buttonX, buttonCenterX=$buttonCenterX, screenCenterX=$screenCenterX")
-        android.util.Log.d("BoltAssist", "MENU POSITIONING: preferredX=$preferredMenuX, finalX=$menuX, screenWidth=$screenWidth")
-        android.util.Log.d("BoltAssist", "MENU POSITIONING: buttonLeft=${buttonCenterX < screenCenterX}, estimatedWidth=$estimatedMenuWidth")
+        // Clamp final position to keep it on-screen
+        val safetyMargin = (5 * resources.displayMetrics.density).toInt() // 5dp margin
+        val finalX = menuX.coerceIn(safetyMargin, screenWidth - menuWidthPx - safetyMargin)
+        val finalY = buttonY.coerceIn(safetyMargin, screenHeight - 500 - safetyMargin) // Approx menu height 500px
+
+        android.util.Log.d("BoltAssist", "MENU: buttonX=$buttonX, buttonCenterX=$buttonCenterX")
+        android.util.Log.d("BoltAssist", "MENU: menuX=$menuX, finalX=$finalX, menuWidth=$menuWidthPx, screenWidth=$screenWidth")
 
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            menuWidthPx,
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -463,8 +455,8 @@ class FloatingWindowService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = menuX
-            y = menuY
+            x = finalX
+            y = finalY
         }
         
         expandedView = layout
