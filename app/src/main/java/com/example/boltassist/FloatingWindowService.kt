@@ -283,7 +283,7 @@ class FloatingWindowService : Service() {
                 lastEndedTripId?.let { tripId ->
                     val reopened = TripManager.resumeTrip(tripId)
                     reopened?.let { trip ->
-                        // Adopt resumed state
+                        // Adopt resumed state with the trip's saved earnings value
                         isRecording = true
                         earnings = trip.earningsPLN * 10
                         updateMoneyDisplay()
@@ -296,6 +296,9 @@ class FloatingWindowService : Service() {
                         lastEndedTripId = null
                         resumeButton?.visibility = View.GONE
                         resumeHandler.removeCallbacks(resumeVisibilityRunnable)
+                        // Reset entry field to a sensible default (dominant value for this hour)
+                        earnings = computeSuggestedEarnings()
+                        moneyDisplay?.text = "${earnings / 10.0} PLN"
                     }
                 }
             }
@@ -439,7 +442,9 @@ class FloatingWindowService : Service() {
                 android.util.Log.w("BoltAssist", "FLOATING: WARNING - Trip has 0 earnings!")
             }
             
-            val completedTrip = TripManager.stopTrip(currentLocation, earnings / 10) // Convert back to PLN
+            // Convert tenths-of-PLN to whole PLN with proper rounding (so 75→8 PLN instead of 7)
+            val roundedPln = kotlin.math.round(earnings / 10.0).toInt()
+            val completedTrip = TripManager.stopTrip(currentLocation, roundedPln)
             android.util.Log.d("BoltAssist", "FLOATING: Trip completed: $completedTrip")
             
             // Validate completed trip
@@ -464,9 +469,8 @@ class FloatingWindowService : Service() {
             android.util.Log.d("BoltAssist", "FLOATING: Storage info: ${TripManager.getStorageInfo()}")
             
             isRecording = false
-            // Reset earnings for next trip
-            earnings = 50 // back to default 5 PLN for next trip
-            // Update display if expanded view is open
+            // Preserve the just-ended trip earnings so user can tweak before resuming
+            earnings = roundedPln * 10
             moneyDisplay?.text = "${earnings / 10.0} PLN"
             
             // Store reference for possible resume and start countdown
@@ -585,5 +589,30 @@ class FloatingWindowService : Service() {
         } else {
             resumeHandler.removeCallbacks(resumeVisibilityRunnable)
         }
+    }
+
+    /**
+     * Calculate a default earning suggestion for the next trip. Uses the arithmetic
+     * mean of all completed trips whose *start* time falls within the current hour.
+     * If no data, returns 10 PLN. Value returned is in 0.1-PLN units.
+     */
+    private fun computeSuggestedEarnings(): Int {
+        val calendar = java.util.Calendar.getInstance()
+        val currentHour = calendar.get(java.util.Calendar.HOUR_OF_DAY)
+
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+
+        val matching = TripManager.tripsCache.filter { it.endTime != null && it.earningsPLN > 0 }.mapNotNull { trip ->
+            try {
+                val date = dateFormat.parse(trip.startTime)
+                calendar.time = date
+                val h = calendar.get(java.util.Calendar.HOUR_OF_DAY)
+                if (h == currentHour) trip.earningsPLN else null
+            } catch (_: Exception) { null }
+        }
+
+        val avg = matching.takeIf { it.isNotEmpty() }?.average() ?: 10.0
+        val floored = kotlin.math.floor(avg).toInt().coerceAtLeast(1)
+        return floored * 10 // convert PLN -> tenths
     }
 } 
