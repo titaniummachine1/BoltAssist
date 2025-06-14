@@ -102,6 +102,18 @@ fun MapScreen() {
         )
     }
 
+    // Auto-refresh overlays every 10 seconds
+    LaunchedEffect(mapViewState.value) {
+        while (true) {
+            kotlinx.coroutines.delay(10_000) // 10 seconds
+            try {
+                MapOverlayManager.refreshAllOverlays(mapViewState.value)
+            } catch (e: Exception) {
+                android.util.Log.e("BoltAssist", "Failed to refresh overlays", e)
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         // Main map view
         AndroidView(
@@ -122,22 +134,40 @@ fun MapScreen() {
             }
         }
         
-        // Heatmap toggle button (top right)
-        var heatmapVisible by remember { mutableStateOf(true) }
-        Button(
-            onClick = { 
-                heatmapVisible = !heatmapVisible
-                MapOverlayManager.toggleHeatmapVisibility(mapViewState.value, heatmapVisible)
-                android.util.Log.d("BoltAssist", "Heatmap visibility: $heatmapVisible")
-            },
+        // Top controls row
+        Row(
             modifier = Modifier
-                .align(Alignment.TopEnd)
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
                 .padding(16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (heatmapVisible) Color(0xFF4CAF50) else Color.Gray
-            )
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Heat", fontSize = 10.sp)
+            // Overlay status (left)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f))
+            ) {
+                Text(
+                    text = MapOverlayManager.getOverlaySummary(),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(8.dp)
+                )
+            }
+            
+            // Overlay toggle button (right)
+            var overlaysVisible by remember { mutableStateOf(true) }
+            Button(
+                onClick = { 
+                    overlaysVisible = !overlaysVisible
+                    MapOverlayManager.toggleOverlayVisibility(mapViewState.value, overlaysVisible)
+                    android.util.Log.d("BoltAssist", "Overlays visibility: $overlaysVisible")
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (overlaysVisible) Color(0xFF4CAF50) else Color.Gray
+                )
+            ) {
+                Text(if (overlaysVisible) "🔍 ON" else "🔍 OFF", fontSize = 10.sp)
+            }
         }
         
         // Scan buttons for demand/supply analysis
@@ -160,7 +190,7 @@ fun MapScreen() {
                 modifier = Modifier.weight(0.4f),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C851)) // Green for demand
             ) {
-                Text("Scan\nDemand", fontSize = 12.sp, lineHeight = 14.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text("📱 Scan\nDemand", fontSize = 12.sp, lineHeight = 14.sp, textAlign = TextAlign.Center)
             }
             
             Spacer(modifier = Modifier.weight(0.2f))
@@ -177,8 +207,23 @@ fun MapScreen() {
                 modifier = Modifier.weight(0.4f),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4444)) // Red for supply
             ) {
-                Text("Scan\nSupply", fontSize = 12.sp, lineHeight = 14.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text("🚗 Scan\nSupply", fontSize = 12.sp, lineHeight = 14.sp, textAlign = TextAlign.Center)
             }
+        }
+        
+        // Debug info (bottom center, above scan buttons)
+        Card(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 80.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.5f))
+        ) {
+            Text(
+                text = MapOverlayManager.getOverlayStats(),
+                color = Color.White,
+                fontSize = 8.sp,
+                modifier = Modifier.padding(4.dp)
+            )
         }
     }
 } 

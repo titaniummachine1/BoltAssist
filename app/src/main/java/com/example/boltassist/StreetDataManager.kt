@@ -9,6 +9,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.runtime.mutableStateListOf
 import kotlinx.coroutines.*
+import com.example.boltassist.TimeBucketConfig
 
 /**
  * Represents demand/supply data for a specific street segment at a specific time
@@ -97,10 +98,11 @@ object StreetDataManager {
         val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
         
         val calendar = Calendar.getInstance()
-        // Use 30-minute buckets for now (can be changed to 15-minute later)
-        val hour = calendar.get(Calendar.HOUR_OF_DAY)
-        val minute = calendar.get(Calendar.MINUTE)
-        val timeBucket = hour * 2 + if (minute >= 30) 1 else 0
+        // Delegate to shared config – allows switching between 30- and 15-minute buckets
+        val timeBucket = TimeBucketConfig.getTimeBucket(
+            calendar.get(Calendar.HOUR_OF_DAY),
+            calendar.get(Calendar.MINUTE)
+        )
         
         val dayOfWeek = when (calendar.get(Calendar.DAY_OF_WEEK)) {
             Calendar.MONDAY -> 0; Calendar.TUESDAY -> 1; Calendar.WEDNESDAY -> 2
@@ -169,33 +171,87 @@ object StreetDataManager {
             // Calculate travel time assuming 40 km/h average speed
             val travelTimeMinutes = (distanceKm / 40.0 * 60).toInt()
             
-            // Calculate future time bucket when we'd arrive
+            // Calculate future time bucket when we'd arrive (using 15-minute buckets)
             val futureTime = Calendar.getInstance().apply {
                 add(Calendar.MINUTE, travelTimeMinutes)
             }
-            val futureBucket = getCurrentTimeBucket(futureTime)
+            val futureBucket = TimeBucketConfig.getTimeBucket(
+                futureTime.get(Calendar.HOUR_OF_DAY),
+                futureTime.get(Calendar.MINUTE)
+            )
             val futureDay = getCurrentDayOfWeek(futureTime)
             
-            // Find relevant historical data for that time
+            // Find relevant historical data for that future time
             val relevantData = dataList.filter { 
                 it.timeBucket == futureBucket && it.dayOfWeek == futureDay 
             }
             
-            if (relevantData.isNotEmpty()) {
-                val avgDemand = relevantData.map { it.passengerDemand }.average()
-                val avgSupply = relevantData.map { it.driverSupply }.average()
+            // Also include recent data from the last 30 minutes for real-time adjustment
+            val recentData = dataList.filter {
+                try {
+                    val dataTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).parse(it.timestamp)?.time ?: 0L
+                    val timeDiff = System.currentTimeMillis() - dataTime
+                    timeDiff <= 30 * 60 * 1000 // Last 30 minutes
+                } catch (e: Exception) { false }
+            }
+            
+            if (relevantData.isNotEmpty() || recentData.isNotEmpty()) {
+                // Combine historical and recent data with different weights
+                val historicalDemand = if (relevantData.isNotEmpty()) {
+                    relevantData.map { it.passengerDemand }.average()
+                } else 0.0
                 
-                // Simple earnings prediction based on demand/supply ratio
+                val historicalSupply = if (relevantData.isNotEmpty()) {
+                    relevantData.map { it.driverSupply }.average()
+                } else 0.0
+                
+                val recentDemand = if (recentData.isNotEmpty()) {
+                    recentData.map { it.passengerDemand }.average()
+                } else 0.0
+                
+                val recentSupply = if (recentData.isNotEmpty()) {
+                    recentData.map { it.driverSupply }.average()
+                } else 0.0
+                
+                // Weight recent data more heavily for short travel times
+                val recentWeight = when {
+                    travelTimeMinutes <= 5 -> 0.8 // Very recent data is most important
+                    travelTimeMinutes <= 15 -> 0.6 // Recent data still important
+                    travelTimeMinutes <= 30 -> 0.4 // Historical becomes more important
+                    else -> 0.2 // Mostly historical for longer travel times
+                }
+                val historicalWeight = 1.0 - recentWeight
+                
+                val avgDemand = (recentDemand * recentWeight + historicalDemand * historicalWeight)
+                val avgSupply = (recentSupply * recentWeight + historicalSupply * historicalWeight)
+                
+                // Enhanced earnings prediction with time-based adjustments
                 val demandSupplyRatio = if (avgSupply > 0) avgDemand / avgSupply else avgDemand
                 val baseEarnings = 8.0 // Base PLN per hour
-                val predictedEarnings = baseEarnings * (1.0 + demandSupplyRatio * 0.5)
+                
+                // Time-based multipliers for demand patterns
+                val timeMultiplier = when (futureBucket) {
+                    in 28..36 -> 1.3 // 7:00-9:00 AM - morning rush
+                    in 68..76 -> 1.4 // 5:00-7:00 PM - evening rush
+                    in 80..92 -> 1.2 // 8:00-11:00 PM - nightlife
+                    in 4..12 -> 0.7  // 1:00-3:00 AM - low demand
+                    else -> 1.0
+                }
+                
+                val predictedEarnings = baseEarnings * (1.0 + demandSupplyRatio * 0.5) * timeMultiplier
+                
+                // Confidence based on data availability and recency
+                val dataPoints = relevantData.size + recentData.size
+                val baseConfidence = minOf(1.0, dataPoints / 15.0) // More data = higher confidence
+                val recencyBonus = if (recentData.isNotEmpty()) 0.2 else 0.0
+                val confidence = (baseConfidence + recencyBonus).coerceIn(0.0, 1.0)
                 
                 val prediction = StreetPrediction(
                     streetHash = streetHash,
                     centerLat = representativeData.centerLat,
                     centerLng = representativeData.centerLng,
                     predictedEarnings = predictedEarnings,
-                    confidenceLevel = minOf(1.0, relevantData.size / 10.0), // More data = higher confidence
+                    confidenceLevel = confidence,
                     travelTimeMinutes = travelTimeMinutes,
                     demandScore = avgDemand,
                     supplyScore = avgSupply,
@@ -206,14 +262,16 @@ object StreetDataManager {
             }
         }
         
-        // Sort by predicted earnings (highest first)
-        return predictions.sortedByDescending { it.predictedEarnings }
+        // Sort by predicted earnings adjusted for travel time (closer = better)
+        return predictions.sortedByDescending { 
+            it.predictedEarnings * (1.0 - it.travelTimeMinutes / 60.0 * 0.3) // Slight penalty for distance
+        }
     }
     
     private fun getCurrentTimeBucket(calendar: Calendar = Calendar.getInstance()): Int {
         val hour = calendar.get(Calendar.HOUR_OF_DAY)
         val minute = calendar.get(Calendar.MINUTE)
-        return hour * 2 + if (minute >= 30) 1 else 0
+        return TimeBucketConfig.getTimeBucket(hour, minute)
     }
     
     private fun getCurrentDayOfWeek(calendar: Calendar = Calendar.getInstance()): Int {

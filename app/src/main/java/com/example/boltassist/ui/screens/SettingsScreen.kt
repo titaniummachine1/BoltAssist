@@ -119,6 +119,76 @@ fun SettingsScreen(
             }
         }
         
+        // Heatmap Analysis settings
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Heatmap Analysis", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(8.dp))
+                
+                val context = LocalContext.current
+                val prefs = remember { context.getSharedPreferences("BoltAssist", Context.MODE_PRIVATE) }
+                
+                var colorSensitivity by remember { 
+                    mutableStateOf(prefs.getFloat("heatmap_color_sensitivity", 0.6f)) 
+                }
+                var clusterThreshold by remember { 
+                    mutableStateOf(prefs.getInt("heatmap_cluster_threshold", 60)) 
+                }
+                
+                // Color sensitivity
+                Text("Color Detection Sensitivity: ${(colorSensitivity * 100).toInt()}%", fontWeight = FontWeight.Medium)
+                Slider(
+                    value = colorSensitivity,
+                    onValueChange = { 
+                        colorSensitivity = it
+                        prefs.edit().putFloat("heatmap_color_sensitivity", it).apply()
+                    },
+                    valueRange = 0.3f..0.9f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Text(
+                    "Higher = detects more orange/red pixels (may include false positives)\n" +
+                    "Lower = only detects bright hotspots (may miss weak signals)",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                
+                // Cluster threshold
+                Text("Hotspot Cluster Size: $clusterThreshold pixels", fontWeight = FontWeight.Medium)
+                Slider(
+                    value = clusterThreshold.toFloat(),
+                    onValueChange = { 
+                        clusterThreshold = it.toInt()
+                        prefs.edit().putInt("heatmap_cluster_threshold", clusterThreshold).apply()
+                    },
+                    valueRange = 30f..120f,
+                    steps = 8,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Text(
+                    "Minimum pixels needed to form a hotspot\n" +
+                    "Higher = fewer, larger hotspots • Lower = more, smaller hotspots",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                
+                // OSM reference info
+                Text("OSM Reference Points", fontWeight = FontWeight.Medium)
+                Text(
+                    "Supports: Olsztyn, Warsaw, Krakow, Gdansk, Wroclaw\n" +
+                    "• Auto-detects map rotation using street patterns\n" +
+                    "• Uses known landmarks for accurate geo-positioning\n" +
+                    "• Falls back to basic analysis for other cities",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+            }
+        }
+        
         // Debug settings
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
@@ -212,6 +282,51 @@ fun SettingsScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan)
                 ) { 
                     Text("Debug: List All Trips") 
+                }
+                
+                Button(
+                    onClick = { 
+                        // Generate sample overlay data for testing
+                        val prefs = context.getSharedPreferences("BoltAssist", Context.MODE_PRIVATE)
+                        val selectedCity = prefs.getString("operation_city", "Olsztyn") ?: "Olsztyn"
+                        val cityConfig = MapConfig.getCityConfig(selectedCity)
+                        val centerLat = cityConfig.center.latitude
+                        val centerLng = cityConfig.center.longitude
+                        
+                        // Generate 5-8 demand hotspots around city center
+                        val demandCount = (5..8).random()
+                        repeat(demandCount) {
+                            val offsetLat = (Math.random() - 0.5) * 0.02 // ~1km radius
+                            val offsetLng = (Math.random() - 0.5) * 0.02
+                            StreetDataManager.addStreetData(
+                                lat = centerLat + offsetLat,
+                                lng = centerLng + offsetLng,
+                                passengerDemand = (1..4).random(),
+                                driverSupply = 0,
+                                dataSource = "test_demand"
+                            )
+                        }
+                        
+                        // Generate 8-12 driver positions around city center
+                        val driverCount = (8..12).random()
+                        repeat(driverCount) {
+                            val offsetLat = (Math.random() - 0.5) * 0.015 // ~750m radius
+                            val offsetLng = (Math.random() - 0.5) * 0.015
+                            StreetDataManager.addStreetData(
+                                lat = centerLat + offsetLat,
+                                lng = centerLng + offsetLng,
+                                passengerDemand = 0,
+                                driverSupply = 1,
+                                dataSource = "test_supply"
+                            )
+                        }
+                        
+                        android.util.Log.d("BoltAssist", "Generated test data: $demandCount demand hotspots, $driverCount drivers for $selectedCity")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Green)
+                ) { 
+                    Text("🧪 Generate Test Overlay Data") 
                 }
             }
         }

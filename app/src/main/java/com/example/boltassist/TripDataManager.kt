@@ -14,7 +14,7 @@ data class WeightedEarning(val amount: Double, val timestamp: Long, val isEditMo
  * Time bucket configuration - can be switched between 15-minute and 30-minute accuracy
  */
 object TimeBucketConfig {
-    const val USE_15_MINUTE_BUCKETS = false // Set to true for 15-minute accuracy
+    const val USE_15_MINUTE_BUCKETS = true // Default to 15-minute accuracy for finer demand mapping
     
     fun getBucketsPerDay(): Int = if (USE_15_MINUTE_BUCKETS) 96 else 48 // 4 per hour vs 2 per hour
     
