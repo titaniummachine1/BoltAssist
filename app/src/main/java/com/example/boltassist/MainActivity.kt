@@ -126,9 +126,10 @@ class MainActivity : ComponentActivity() {
                     android.util.Log.d("BoltAssist", "MAIN: Final cache size after storage setup: ${TripManager.tripsCache.size}")
                 }
                 
-                // Drawer
+                // Drawer - disable swipe gesture to avoid conflicts with map navigation
                 ModalNavigationDrawer(
                     drawerState = drawerState,
+                    gesturesEnabled = false, // Disable swipe-to-open for map compatibility
                     drawerContent = {
                         ModalDrawerSheet {
                             Spacer(Modifier.height(16.dp))

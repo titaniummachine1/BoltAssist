@@ -82,6 +82,9 @@ class FloatingWindowService : Service() {
         TrafficDataManager.initialize(this)
         TrafficDataManager.startTracking()
         
+        // Initialize street data tracking
+        StreetDataManager.initialize(this)
+        
         android.util.Log.d("BoltAssist", "FloatingWindowService started - TripManager has ${TripManager.tripsCache.size} trips")
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         
@@ -498,6 +501,8 @@ class FloatingWindowService : Service() {
                     currentLocation = location
                     // Feed location to traffic tracking system
                     TrafficDataManager.processLocation(location)
+                    // Update street data manager with current location
+                    StreetDataManager.updateCurrentLocation(location)
                 }
             }
         }

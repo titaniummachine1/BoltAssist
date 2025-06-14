@@ -10,8 +10,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import android.content.Context
 import com.example.boltassist.TripManager
+import com.example.boltassist.MapConfig
+import com.example.boltassist.StreetDataManager
+import com.example.boltassist.TrafficDataManager
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     displayPath: String, 
@@ -33,6 +39,83 @@ fun SettingsScreen(
                 Button(onClick = onFolderSelect, Modifier.fillMaxWidth()) {
                     Text("Select Directory")
                 }
+            }
+        }
+        
+        // Operation area settings
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Operation Area", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(Modifier.height(8.dp))
+                
+                val context = LocalContext.current
+                val prefs = remember { context.getSharedPreferences("BoltAssist", Context.MODE_PRIVATE) }
+                
+                var selectedCity by remember { 
+                    mutableStateOf(prefs.getString("operation_city", "Olsztyn") ?: "Olsztyn") 
+                }
+                var operationRange by remember { 
+                    mutableStateOf(prefs.getFloat("operation_range", 10.0f)) 
+                }
+                
+                // City selection
+                Text("Operation City", fontWeight = FontWeight.Medium)
+                val cities = MapConfig.getAllCityNames()
+                var expandedCity by remember { mutableStateOf(false) }
+                
+                ExposedDropdownMenuBox(
+                    expanded = expandedCity,
+                    onExpandedChange = { expandedCity = !expandedCity },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = selectedCity,
+                        onValueChange = {},
+                        readOnly = true,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedCity) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = expandedCity,
+                        onDismissRequest = { expandedCity = false }
+                    ) {
+                        cities.forEach { city ->
+                            DropdownMenuItem(
+                                text = { Text(city) },
+                                onClick = {
+                                    selectedCity = city
+                                    expandedCity = false
+                                    prefs.edit().putString("operation_city", city).apply()
+                                }
+                            )
+                        }
+                    }
+                }
+                
+                Spacer(Modifier.height(8.dp))
+                
+                // Range selection
+                Text("Operation Range: ${operationRange.toInt()} km", fontWeight = FontWeight.Medium)
+                Slider(
+                    value = operationRange,
+                    onValueChange = { 
+                        operationRange = it
+                        prefs.edit().putFloat("operation_range", it).apply()
+                    },
+                    valueRange = 5f..50f,
+                    steps = 8, // 5, 10, 15, 20, 25, 30, 35, 40, 45, 50
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Text(
+                    "Map will load within ${operationRange.toInt()}km of ${selectedCity} center\n" +
+                    "• Loading prioritizes center tiles (faster startup)\n" + 
+                    "• Based on main transport hub when available\n" +
+                    "• Switch to Map tab to see changes",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
         
@@ -96,6 +179,8 @@ fun SettingsScreen(
                 Text("Trips in cache: $tripsCount", fontSize = 12.sp, color = Color.Gray)
                 Text("Storage: ${TripManager.getStorageInfo()}", fontSize = 12.sp, color = Color.Gray)
                 Text("TripManager initialized: ${TripManager.isInitialized()}", fontSize = 12.sp, color = Color.Gray)
+                Text("${StreetDataManager.getDataSummary()}", fontSize = 12.sp, color = Color.Gray)
+                Text("${TrafficDataManager.getTrafficSummary()}", fontSize = 12.sp, color = Color.Gray)
                 
                 Button(
                     onClick = { 

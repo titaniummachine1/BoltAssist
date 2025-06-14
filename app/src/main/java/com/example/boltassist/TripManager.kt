@@ -219,6 +219,11 @@ object TripManager {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val now = Date()
         val startTime = dateFormat.format(now)
+        
+        // Log precise location for street relationship analysis
+        location?.let { loc ->
+            android.util.Log.d("BoltAssist", "TRIP START: Lat=${loc.latitude}, Lng=${loc.longitude}, Accuracy=${loc.accuracy}m, Time=$startTime")
+        }
 
         if (allowMerge) {
         // Check if we should merge with the most recent completed trip
@@ -301,6 +306,22 @@ object TripManager {
                 adjustedStartTime = dateFormat.format(cal.time)
                 adjustedDuration = 5
                 quickFlag = true
+            }
+        }
+        
+        // Log precise end location for street relationship analysis
+        location?.let { loc ->
+            android.util.Log.d("BoltAssist", "TRIP END: Lat=${loc.latitude}, Lng=${loc.longitude}, Accuracy=${loc.accuracy}m, Time=$endTime")
+            
+            // Calculate trip distance if both start and end locations exist
+            tripInProgress.startLocation?.let { startLoc ->
+                val results = FloatArray(1)
+                Location.distanceBetween(
+                    startLoc.latitude, startLoc.longitude,
+                    loc.latitude, loc.longitude,
+                    results
+                )
+                android.util.Log.d("BoltAssist", "TRIP DISTANCE: ${results[0].toInt()}m, Earnings: ${earnings}PLN, Duration: ${adjustedDuration}min")
             }
         }
         

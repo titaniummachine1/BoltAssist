@@ -11,6 +11,39 @@ import kotlinx.coroutines.*
 data class WeightedEarning(val amount: Double, val timestamp: Long, val isEditMode: Boolean, val tag: String? = null)
 
 /**
+ * Time bucket configuration - can be switched between 15-minute and 30-minute accuracy
+ */
+object TimeBucketConfig {
+    const val USE_15_MINUTE_BUCKETS = false // Set to true for 15-minute accuracy
+    
+    fun getBucketsPerDay(): Int = if (USE_15_MINUTE_BUCKETS) 96 else 48 // 4 per hour vs 2 per hour
+    
+    fun getTimeBucket(hour: Int, minute: Int): Int {
+        return if (USE_15_MINUTE_BUCKETS) {
+            // 15-minute buckets: 0-95 (4 per hour)
+            hour * 4 + (minute / 15)
+        } else {
+            // 30-minute buckets: 0-47 (2 per hour)
+            hour * 2 + if (minute >= 30) 1 else 0
+        }
+    }
+    
+    fun getBucketDescription(bucket: Int): String {
+        return if (USE_15_MINUTE_BUCKETS) {
+            val hour = bucket / 4
+            val quarterHour = bucket % 4
+            val minute = quarterHour * 15
+            "${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}"
+        } else {
+            val hour = bucket / 2
+            val halfHour = bucket % 2
+            val minute = if (halfHour == 0) "00" else "30"
+            "${hour.toString().padStart(2, '0')}:$minute"
+        }
+    }
+}
+
+/**
  * Dedicated module for trip data management and real-time predictions
  * Handles adding trips and sophisticated prediction algorithms with proper earning-based weighting
  */

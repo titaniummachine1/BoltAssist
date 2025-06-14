@@ -38,6 +38,11 @@
             android:name=".FloatingWindowService"
             android:enabled="true"
             android:exported="false" />
+        
+        <service
+            android:name=".ScreenCaptureService"
+            android:enabled="true"
+            android:exported="false" />
     </application>
 
 </manifest>
