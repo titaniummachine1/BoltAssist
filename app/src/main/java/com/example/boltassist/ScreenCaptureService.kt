@@ -3,16 +3,13 @@ package com.example.boltassist
 import android.app.Service
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
-import android.graphics.Rect
-import android.media.ImageReader
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.provider.MediaStore
 import android.view.Gravity
-import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
@@ -20,20 +17,12 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
-import com.example.boltassist.DemandHeatmapAnalyzer
-import android.provider.MediaStore
-import android.net.Uri
-import androidx.activity.result.contract.ActivityResultContracts
+import java.io.InputStream
 
 class ScreenCaptureService : Service() {
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
-    private var isCapturing = false
-    private var cropRect = Rect()
     private var captureType = "demand" // "demand" or "supply"
-    
-    private var mediaProjection: MediaProjection? = null
-    private var imageReader: ImageReader? = null
     
     // --- Location support for geo-referencing ---
     private lateinit var fusedLocationClient: com.google.android.gms.location.FusedLocationProviderClient
@@ -41,24 +30,45 @@ class ScreenCaptureService : Service() {
     
     companion object {
         const val EXTRA_CAPTURE_TYPE = "capture_type"
-        const val EXTRA_RESULT_CODE = "result_code"
-        const val EXTRA_RESULT_DATA = "result_data"
+        const val ACTION_IMAGE_SELECTED = "com.example.boltassist.IMAGE_SELECTED"
+        const val EXTRA_IMAGE_URI = "image_uri"
     }
     
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        createOverlay()
         
         // Start location updates
         fusedLocationClient = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(this)
         startLocationUpdates()
+        
+        createOverlay()
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         captureType = intent?.getStringExtra(EXTRA_CAPTURE_TYPE) ?: "demand"
         
-        android.util.Log.d("BoltAssist", "ScreenCapture started for type: $captureType")
+        when (intent?.action) {
+            ACTION_IMAGE_SELECTED -> {
+                val imageUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_IMAGE_URI, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<Uri>(EXTRA_IMAGE_URI)
+                }
+                if (imageUri != null) {
+                    processSelectedImage(imageUri)
+                } else {
+                    android.util.Log.e("BoltAssist", "No image URI received")
+                    stopSelf()
+                }
+                return START_NOT_STICKY
+            }
+            else -> {
+                android.util.Log.d("BoltAssist", "ScreenCapture started for type: $captureType")
+                updateOverlayForCaptureType()
+            }
+        }
         
         return START_NOT_STICKY
     }
@@ -70,52 +80,44 @@ class ScreenCaptureService : Service() {
             setPadding(20, 20, 20, 20)
         }
         
-        // Title and instructions
+        // Title
         val titleText = TextView(this).apply {
-            text = "Bolt ${captureType.capitalize()} Capture"
+            id = android.R.id.title
             textSize = 16f
             setTextColor(ContextCompat.getColor(this@ScreenCaptureService, android.R.color.black))
             setPadding(0, 0, 0, 8)
         }
         
+        // Instructions
         val instructionsText = TextView(this).apply {
-            text = if (captureType == "demand") {
-                "Capture Bolt's demand heatmap (orange/red hexagons)\n• Take screenshot of Bolt app\n• Or pick existing image from gallery"
-            } else {
-                "Capture Bolt's driver supply (car icons)\n• Take screenshot of Bolt app\n• Or pick existing image from gallery"
-            }
+            id = android.R.id.text1
             textSize = 12f
             setTextColor(ContextCompat.getColor(this@ScreenCaptureService, android.R.color.black))
             setPadding(0, 0, 0, 16)
         }
         
-        // Take Screenshot button
-        val screenshotButton = Button(this).apply {
-            text = "📱 Take Screenshot"
-            setOnClickListener {
-                hideOverlayAndCapture()
-            }
-        }
-        
         // Pick from Gallery button
         val galleryButton = Button(this).apply {
-            text = "🖼️ Pick from Gallery"
+            id = android.R.id.button1
+            text = "🖼️ Select Image from Storage"
             setOnClickListener {
-                hideOverlayAndPickFromGallery()
+                openImagePicker()
             }
         }
         
         // Status text (initially hidden)
         val statusText = TextView(this).apply {
+            id = android.R.id.text2
             text = "Processing..."
             textSize = 14f
-            setTextColor(ContextCompat.getColor(this@ScreenCaptureService, android.R.color.blue))
+            setTextColor(ContextCompat.getColor(this@ScreenCaptureService, android.R.color.holo_blue_dark))
             visibility = View.GONE
             setPadding(0, 8, 0, 8)
         }
         
         // Close button
         val closeButton = Button(this).apply {
+            id = android.R.id.button2
             text = "❌ Close"
             setOnClickListener {
                 stopSelf()
@@ -124,7 +126,6 @@ class ScreenCaptureService : Service() {
         
         layout.addView(titleText)
         layout.addView(instructionsText)
-        layout.addView(screenshotButton)
         layout.addView(galleryButton)
         layout.addView(statusText)
         layout.addView(closeButton)
@@ -148,107 +149,116 @@ class ScreenCaptureService : Service() {
         windowManager.addView(overlayView, params)
     }
     
-    private fun hideOverlayAndCapture() {
-        // Hide overlay immediately for better UX
-        overlayView?.visibility = View.GONE
+    private fun updateOverlayForCaptureType() {
+        overlayView?.findViewById<TextView>(android.R.id.title)?.text = 
+            "Bolt ${captureType.replaceFirstChar { it.uppercase() }} Analysis"
         
-        android.util.Log.d("BoltAssist", "Taking screenshot for $captureType analysis")
-        
-        // Use Android's built-in screenshot (requires user action)
-        // For now, simulate with a delay and then process
-        CoroutineScope(Dispatchers.Main).launch {
-            delay(2000) // Give user time to take screenshot manually
-            
-            // Show processing status
-            overlayView?.visibility = View.VISIBLE
-            overlayView?.findViewById<TextView>(android.R.id.text1)?.apply {
-                text = "Processing screenshot..."
-                visibility = View.VISIBLE
-            }
-            
-            // Process the capture
-            processCapture(null) // null means we'll simulate for now
-            
-            // Auto-close after processing
-            delay(2000)
-            stopSelf()
-        }
-    }
-    
-    private fun hideOverlayAndPickFromGallery() {
-        // Hide overlay immediately
-        overlayView?.visibility = View.GONE
-        
-        android.util.Log.d("BoltAssist", "Opening gallery picker for $captureType analysis")
-        
-        // For now, simulate gallery pick
-        CoroutineScope(Dispatchers.Main).launch {
-            delay(1000)
-            
-            // Show processing status
-            overlayView?.visibility = View.VISIBLE
-            overlayView?.findViewById<TextView>(android.R.id.text1)?.apply {
-                text = "Processing selected image..."
-                visibility = View.VISIBLE
-            }
-            
-            // Process the selected image
-            processCapture(null) // null means we'll simulate for now
-            
-            // Auto-close after processing
-            delay(2000)
-            stopSelf()
-        }
-    }
-    
-    private fun processCapture(bitmap: Bitmap?) {
-        android.util.Log.d("BoltAssist", "Processing capture for $captureType analysis")
-        
-        // Get current GPS location
-        val loc = currentLocation ?: run {
-            android.util.Log.w("BoltAssist", "No location available - using simulated data")
-            simulateDataExtraction()
-            return
-        }
-        
-        // Get operation range from Settings
-        val prefs = getSharedPreferences("BoltAssist", MODE_PRIVATE)
-        val rangeKm = prefs.getFloat("operation_range", 15.0f)
-        
-        if (bitmap != null) {
-            // Real image processing
+        overlayView?.findViewById<TextView>(android.R.id.text1)?.text = 
             if (captureType == "demand") {
-                // Extract demand hotspots
-                val hotspots = DemandHeatmapAnalyzer.extractHotspots(bitmap, loc, rangeKm, this)
-                storeHotspots(hotspots, "demand")
+                "Select a screenshot of Bolt's demand heatmap showing orange/red hexagons indicating passenger demand areas."
             } else {
-                // Extract driver supply (cars) - to be implemented
-                val cars = extractDriverSupply(bitmap, loc, rangeKm)
-                storeHotspots(cars, "supply")
+                "Select a screenshot of Bolt's driver view showing car icons representing other drivers in the area."
             }
-        } else {
-            // Simulate data extraction for testing
-            simulateDataExtraction()
+    }
+    
+    private fun openImagePicker() {
+        try {
+            // Start MainActivity to handle the image picker
+            val mainIntent = Intent(this, MainActivity::class.java).apply {
+                action = "PICK_IMAGE_FOR_ANALYSIS"
+                putExtra(EXTRA_CAPTURE_TYPE, captureType)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            
+            startActivity(mainIntent)
+            
+            // Hide overlay while user picks image
+            overlayView?.visibility = View.GONE
+            
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "Failed to open image picker", e)
+            showStatus("Failed to open image picker")
         }
     }
     
-    private fun extractDriverSupply(bitmap: Bitmap, location: android.location.Location, rangeKm: Float): List<Pair<Double, Double>> {
-        // TODO: Implement car icon detection in Bolt app screenshots
-        // For now, simulate some driver positions
-        val drivers = mutableListOf<Pair<Double, Double>>()
+    private fun processSelectedImage(imageUri: Uri) {
+        showStatus("Processing selected image...")
         
-        // Simulate 3-8 drivers around current location
-        val driverCount = (3..8).random()
-        repeat(driverCount) {
-            val offsetLat = (Math.random() - 0.5) * 0.01 // ~500m radius
-            val offsetLng = (Math.random() - 0.5) * 0.01
-            drivers.add(
-                (location.latitude + offsetLat) to (location.longitude + offsetLng)
-            )
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // Load bitmap from URI
+                val bitmap = loadBitmapFromUri(imageUri)
+                if (bitmap == null) {
+                    withContext(Dispatchers.Main) {
+                        showStatus("Failed to load image")
+                        delay(2000)
+                        stopSelf()
+                    }
+                    return@launch
+                }
+                
+                android.util.Log.d("BoltAssist", "Loaded image: ${bitmap.width}x${bitmap.height}")
+                
+                // Get current location
+                val location = currentLocation
+                if (location == null) {
+                    android.util.Log.w("BoltAssist", "No location available for geo-referencing")
+                    withContext(Dispatchers.Main) {
+                        showStatus("No GPS location available")
+                        delay(2000)
+                        stopSelf()
+                    }
+                    return@launch
+                }
+                
+                // Get operation range from settings
+                val prefs = getSharedPreferences("BoltAssist", MODE_PRIVATE)
+                val rangeKm = prefs.getFloat("operation_range", 15.0f)
+                
+                // Process the image based on capture type
+                val hotspots = when (captureType) {
+                    "demand" -> {
+                        android.util.Log.d("BoltAssist", "Analyzing demand heatmap...")
+                        DemandHeatmapAnalyzer.extractHotspots(bitmap, location, rangeKm, this@ScreenCaptureService)
+                    }
+                    "supply" -> {
+                        android.util.Log.d("BoltAssist", "Analyzing driver supply...")
+                        // TODO: Implement driver supply analysis
+                        emptyList<Pair<Double, Double>>()
+                    }
+                    else -> emptyList()
+                }
+                
+                // Store the extracted data
+                storeHotspots(hotspots, captureType)
+                
+                withContext(Dispatchers.Main) {
+                    showStatus("✅ Analysis complete: ${hotspots.size} points extracted")
+                    delay(3000)
+                    stopSelf()
+                }
+                
+            } catch (e: Exception) {
+                android.util.Log.e("BoltAssist", "Failed to process image", e)
+                withContext(Dispatchers.Main) {
+                    showStatus("Error processing image: ${e.message}")
+                    delay(3000)
+                    stopSelf()
+                }
+            }
         }
-        
-        android.util.Log.d("BoltAssist", "Extracted $driverCount driver positions (simulated)")
-        return drivers
+    }
+    
+    private fun loadBitmapFromUri(uri: Uri): Bitmap? {
+        return try {
+            val inputStream: InputStream? = contentResolver.openInputStream(uri)
+            val bitmap = BitmapFactory.decodeStream(inputStream)
+            inputStream?.close()
+            bitmap
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "Failed to load bitmap from URI", e)
+            null
+        }
     }
     
     private fun storeHotspots(hotspots: List<Pair<Double, Double>>, dataType: String) {
@@ -265,7 +275,7 @@ class ScreenCaptureService : Service() {
                         lng = lng,
                         passengerDemand = 1,
                         driverSupply = 0,
-                        dataSource = "screen_capture_demand"
+                        dataSource = "image_analysis_demand"
                     )
                 }
                 "supply" -> {
@@ -274,70 +284,20 @@ class ScreenCaptureService : Service() {
                         lng = lng,
                         passengerDemand = 0,
                         driverSupply = 1,
-                        dataSource = "screen_capture_supply"
+                        dataSource = "image_analysis_supply"
                     )
                 }
             }
         }
         
-        android.util.Log.d("BoltAssist", "Stored ${hotspots.size} $dataType hotspots from screen capture")
+        android.util.Log.d("BoltAssist", "Stored ${hotspots.size} $dataType hotspots from image analysis")
     }
     
-    /**
-     * Simulate data extraction for testing
-     */
-    private fun simulateDataExtraction() {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                // Simulate processing time
-                delay(1000)
-                
-                // Get current location or use default
-                val lat = currentLocation?.latitude ?: (53.7784 + (Math.random() - 0.5) * 0.01)
-                val lng = currentLocation?.longitude ?: (20.4801 + (Math.random() - 0.5) * 0.01)
-                
-                // Simulate extracted data based on capture type
-                when (captureType) {
-                    "demand" -> {
-                        // Simulate 2-5 demand hotspots
-                        val hotspotCount = (2..5).random()
-                        repeat(hotspotCount) {
-                            val offsetLat = (Math.random() - 0.5) * 0.005
-                            val offsetLng = (Math.random() - 0.5) * 0.005
-                            StreetDataManager.addStreetData(
-                                lat = lat + offsetLat,
-                                lng = lng + offsetLng,
-                                passengerDemand = (1..3).random(),
-                                driverSupply = 0,
-                                dataSource = "screen_capture_demand_sim"
-                            )
-                        }
-                        android.util.Log.d("BoltAssist", "Simulated $hotspotCount demand hotspots")
-                    }
-                    "supply" -> {
-                        // Simulate 3-7 driver positions
-                        val driverCount = (3..7).random()
-                        repeat(driverCount) {
-                            val offsetLat = (Math.random() - 0.5) * 0.008
-                            val offsetLng = (Math.random() - 0.5) * 0.008
-                            StreetDataManager.addStreetData(
-                                lat = lat + offsetLat,
-                                lng = lng + offsetLng,
-                                passengerDemand = 0,
-                                driverSupply = 1,
-                                dataSource = "screen_capture_supply_sim"
-                            )
-                        }
-                        android.util.Log.d("BoltAssist", "Simulated $driverCount driver positions")
-                    }
-                }
-                
-                withContext(Dispatchers.Main) {
-                    android.util.Log.d("BoltAssist", "✅ Data extraction completed for $captureType")
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("BoltAssist", "Failed to extract data", e)
-            }
+    private fun showStatus(message: String) {
+        overlayView?.visibility = View.VISIBLE
+        overlayView?.findViewById<TextView>(android.R.id.text2)?.apply {
+            text = message
+            visibility = View.VISIBLE
         }
     }
     
@@ -369,7 +329,5 @@ class ScreenCaptureService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         overlayView?.let { windowManager.removeView(it) }
-        mediaProjection?.stop()
-        imageReader?.close()
     }
 } 

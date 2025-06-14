@@ -63,7 +63,7 @@ class HeatmapOverlay(
         projection.toPixels(geoPoint, screenPoint)
         
         // Calculate hex size based on confidence and zoom level
-        val baseSize = 30f + (prediction.confidenceLevel * 20f) // 30-50px radius
+        val baseSize = 30f + (prediction.confidenceLevel * 20f).toFloat() // 30-50px radius
         
         // Color based on predicted earnings with time adjustment
         val timeMultiplier = when {
@@ -191,7 +191,14 @@ class DriversOverlay : Overlay() {
         // Get driver supply data from StreetDataManager
         val driverData = StreetDataManager.streetDataCache
             .filter { it.driverSupply > 0 }
-            .filter { System.currentTimeMillis() - java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).parse(it.timestamp)?.time ?: 0L < 300_000 } // Last 5 minutes
+            .filter { 
+                val timestampMillis = try {
+                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).parse(it.timestamp)?.time ?: 0L
+                } catch (e: Exception) {
+                    0L
+                }
+                System.currentTimeMillis() - timestampMillis < 300_000 // Last 5 minutes
+            }
         
         val locations = driverData.map { data ->
             GeoPoint(data.centerLat, data.centerLng)
@@ -261,8 +268,8 @@ object MapOverlayManager {
     
     fun updateHeatmap(mapView: MapView) {
         if (overlaysVisible) {
-        heatmapOverlay?.let {
-            mapView.invalidate() // Trigger redraw
+            heatmapOverlay?.let {
+                mapView.invalidate() // Trigger redraw
             }
         }
     }
@@ -276,7 +283,7 @@ object MapOverlayManager {
                     // Auto-update from street data
                     overlay.addDriversFromStreetData()
                 }
-        mapView.invalidate()
+                mapView.invalidate()
             }
         }
     }
@@ -285,18 +292,30 @@ object MapOverlayManager {
         overlaysVisible = visible
         
         heatmapOverlay?.let { overlay ->
-            if (visible && !mapView.overlays.contains(overlay)) {
-                mapView.overlays.add(overlay)
-            } else if (!visible && mapView.overlays.contains(overlay)) {
-                mapView.overlays.remove(overlay)
+            when {
+                visible && !mapView.overlays.contains(overlay) -> {
+                    mapView.overlays.add(overlay)
+                }
+                !visible && mapView.overlays.contains(overlay) -> {
+                    mapView.overlays.remove(overlay)
+                }
+                else -> {
+                    // No action needed
+                }
             }
         }
         
         driversOverlay?.let { overlay ->
-            if (visible && !mapView.overlays.contains(overlay)) {
-                mapView.overlays.add(overlay)
-            } else if (!visible && mapView.overlays.contains(overlay)) {
-                mapView.overlays.remove(overlay)
+            when {
+                visible && !mapView.overlays.contains(overlay) -> {
+                    mapView.overlays.add(overlay)
+                }
+                !visible && mapView.overlays.contains(overlay) -> {
+                    mapView.overlays.remove(overlay)
+                }
+                else -> {
+                    // No action needed
+                }
             }
         }
         
@@ -334,6 +353,5 @@ object MapOverlayManager {
         val predictions = StreetDataManager.getStreetPredictions().size
         
         return "Stats: $demandPoints demand, $supplyPoints supply, $predictions predictions"
-        }
     }
 } 

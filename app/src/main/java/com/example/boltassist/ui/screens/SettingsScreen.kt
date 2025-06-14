@@ -284,6 +284,7 @@ fun SettingsScreen(
                     Text("Debug: List All Trips") 
                 }
                 
+                val context = LocalContext.current
                 Button(
                     onClick = { 
                         // Generate sample overlay data for testing

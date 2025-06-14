@@ -72,8 +72,35 @@ class MainActivity : ComponentActivity() {
         }
     }
     
+    // Image picker for heatmap analysis
+    private var pendingCaptureType: String? = null
+    private val imagePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { imageUri ->
+            val captureType = pendingCaptureType ?: "demand"
+            android.util.Log.d("BoltAssist", "Image selected for $captureType analysis: $imageUri")
+            
+            // Send the selected image to ScreenCaptureService for processing
+            val intent = Intent(this, ScreenCaptureService::class.java).apply {
+                action = ScreenCaptureService.ACTION_IMAGE_SELECTED
+                putExtra(ScreenCaptureService.EXTRA_IMAGE_URI, imageUri)
+                putExtra(ScreenCaptureService.EXTRA_CAPTURE_TYPE, captureType)
+            }
+            startService(intent)
+        }
+        pendingCaptureType = null
+    }
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Handle image picker intent from ScreenCaptureService
+        if (intent?.action == "PICK_IMAGE_FOR_ANALYSIS") {
+            pendingCaptureType = intent.getStringExtra(ScreenCaptureService.EXTRA_CAPTURE_TYPE) ?: "demand"
+            android.util.Log.d("BoltAssist", "Launching image picker for $pendingCaptureType analysis")
+            imagePickerLauncher.launch("image/*")
+        }
         
         // Load saved storage path
         val prefs = getSharedPreferences("BoltAssist", MODE_PRIVATE)
@@ -176,6 +203,17 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+    
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        
+        // Handle image picker intent when activity is already running
+        if (intent?.action == "PICK_IMAGE_FOR_ANALYSIS") {
+            pendingCaptureType = intent.getStringExtra(ScreenCaptureService.EXTRA_CAPTURE_TYPE) ?: "demand"
+            android.util.Log.d("BoltAssist", "Launching image picker for $pendingCaptureType analysis (onNewIntent)")
+            imagePickerLauncher.launch("image/*")
         }
     }
     
