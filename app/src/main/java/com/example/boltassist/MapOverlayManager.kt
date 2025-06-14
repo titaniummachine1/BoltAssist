@@ -119,24 +119,22 @@ object MapOverlayManager {
     private var driversOverlay: DriversOverlay? = null
     
     fun initializeOverlays(mapView: MapView) {
-        // Clear existing overlays
-        mapView.overlays.clear()
-        
-        // Initialize street data manager if needed
-        if (!StreetDataManager::class.java.declaredFields.any { it.name == "context" && it.get(StreetDataManager) != null }) {
-            android.util.Log.w("BoltAssist", "StreetDataManager not initialized, heatmap overlay disabled")
-            return
+        try {
+            // Clear existing overlays
+            mapView.overlays.clear()
+            
+            // Create and add heatmap overlay
+            heatmapOverlay = HeatmapOverlay(StreetDataManager)
+            mapView.overlays.add(heatmapOverlay)
+            
+            // Create and add drivers overlay
+            driversOverlay = DriversOverlay()
+            mapView.overlays.add(driversOverlay)
+            
+            android.util.Log.d("BoltAssist", "Map overlays initialized successfully")
+        } catch (e: Exception) {
+            android.util.Log.e("BoltAssist", "Failed to initialize map overlays", e)
         }
-        
-        // Create and add heatmap overlay
-        heatmapOverlay = HeatmapOverlay(StreetDataManager)
-        mapView.overlays.add(heatmapOverlay)
-        
-        // Create and add drivers overlay
-        driversOverlay = DriversOverlay()
-        mapView.overlays.add(driversOverlay)
-        
-        android.util.Log.d("BoltAssist", "Map overlays initialized")
     }
     
     fun updateHeatmap(mapView: MapView) {

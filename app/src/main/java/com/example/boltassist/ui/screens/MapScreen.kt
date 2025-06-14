@@ -20,6 +20,7 @@ import org.osmdroid.tileprovider.modules.MapTileModuleProviderBase
 import com.example.boltassist.MapConfig
 import com.example.boltassist.ScreenCaptureService
 import com.example.boltassist.MapOverlayManager
+import com.example.boltassist.StreetDataManager
 
 @Composable
 fun MapScreen() {
@@ -82,8 +83,16 @@ fun MapScreen() {
                 
                 // Initialize overlays for heatmaps and predictions
                 post {
-                    // Initialize overlays after the map is ready
-                    MapOverlayManager.initializeOverlays(this)
+                    try {
+                        // Ensure StreetDataManager is initialized before creating overlays
+                        StreetDataManager.initialize(context)
+                        
+                        // Initialize overlays after the map is ready
+                        MapOverlayManager.initializeOverlays(this)
+                        android.util.Log.d("BoltAssist", "Map overlays initialized successfully")
+                    } catch (e: Exception) {
+                        android.util.Log.e("BoltAssist", "Failed to initialize map overlays", e)
+                    }
                 }
                 
                 android.util.Log.d("BoltAssist", "Enhanced map configured for $selectedCity (${operationRange}km range)")
@@ -99,6 +108,19 @@ fun MapScreen() {
             factory = { mapViewState.value },
             modifier = Modifier.fillMaxSize()
         )
+        
+        // Lifecycle management for MapView
+        DisposableEffect(mapViewState.value) {
+            val mapView = mapViewState.value
+            onDispose {
+                try {
+                    android.util.Log.d("BoltAssist", "Disposing MapView resources")
+                    mapView.onDetach()
+                } catch (e: Exception) {
+                    android.util.Log.e("BoltAssist", "Error disposing MapView", e)
+                }
+            }
+        }
         
         // Heatmap toggle button (top right)
         var heatmapVisible by remember { mutableStateOf(true) }
