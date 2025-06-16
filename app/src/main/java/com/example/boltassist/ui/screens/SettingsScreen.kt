@@ -103,7 +103,7 @@ fun SettingsScreen(
                         prefs.edit().putFloat("operation_range", it).apply()
                     },
                     valueRange = 5f..50f,
-                    steps = 8, // 5, 10, 15, 20, 25, 30, 35, 40, 45, 50
+                    steps = 45, // 1-km increments (5 - 50 km)
                     modifier = Modifier.fillMaxWidth()
                 )
                 

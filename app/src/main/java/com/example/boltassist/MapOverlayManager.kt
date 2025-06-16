@@ -326,13 +326,14 @@ object MapOverlayManager {
         data class Key(val slat: Int, val slng: Int, val elat: Int, val elng: Int)
 
         val groups = mutableMapOf<Key, MutableList<TripData>>()
+        var withHourProximity = false
         for (trip in allTrips) {
             val hDiff = hourDiff(currentHour, hourOfTrip(trip))
-            if (hDiff > 2) continue // keep within ±2 h window to stay time-relevant
-
+            if (hDiff <= 2) withHourProximity = true // at least one qualifies
+            
             val sLoc = trip.startLocation ?: continue
             val eLoc = trip.endLocation ?: continue
-
+            
             val key = Key(
                 (sLoc.latitude / grid).toInt(),
                 (sLoc.longitude / grid).toInt(),
@@ -342,14 +343,46 @@ object MapOverlayManager {
             groups.getOrPut(key) { mutableListOf() }.add(trip)
         }
 
+        // If no trips met ±2h criterion, drop the constraint and regroup using all trips
+        if (!withHourProximity) {
+            groups.clear()
+            for (trip in allTrips) {
+                val sLoc = trip.startLocation ?: continue
+                val eLoc = trip.endLocation ?: continue
+                val key = Key(
+                    (sLoc.latitude / grid).toInt(),
+                    (sLoc.longitude / grid).toInt(),
+                    (eLoc.latitude / grid).toInt(),
+                    (eLoc.longitude / grid).toInt()
+                )
+                groups.getOrPut(key) { mutableListOf() }.add(trip)
+            }
+        }
+
+        // Current driver position (if available) to filter reachable starts
+        val curLoc = StreetDataManager.streetDataCache.lastOrNull { it.passengerDemand >= 0 }?.let {
+            GeoPoint(it.centerLat, it.centerLng)
+        }
+
         // Build ArrowInfo list from grouped data
-        val arrows = groups.values.map { list ->
+        val rawArrows = groups.values.map { list ->
             val sLat = list.map { it.startLocation!!.latitude }.average()
             val sLng = list.map { it.startLocation!!.longitude }.average()
             val eLat = list.map { it.endLocation!!.latitude }.average()
             val eLng = list.map { it.endLocation!!.longitude }.average()
             ArrowInfo(GeoPoint(sLat, sLng), GeoPoint(eLat, eLng), list.size)
-        }.sortedByDescending { it.count }.take(17)
+        }
+
+        // Filter by reachability (ETA <=15 min) if we have current position
+        val filtered = if (curLoc != null) {
+            rawArrows.filter {
+                val dist = distanceMeters(curLoc, it.start)
+                val etaMin = TrafficDataManager.calculateETA(dist) // uses recent speed
+                etaMin <= 15.0
+            }
+        } else rawArrows
+
+        val arrows = filtered.sortedByDescending { it.count }.take(17)
 
         overlay.updateArrows(arrows)
         mapView.invalidate()
@@ -438,22 +471,29 @@ object MapOverlayManager {
 
 data class ArrowInfo(val start: GeoPoint, val end: GeoPoint, val count: Int)
 
+private fun distanceMeters(a: GeoPoint, b: GeoPoint): Double {
+    val res = FloatArray(1)
+    android.location.Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, res)
+    return res[0].toDouble()
+}
+
 /**
  * Overlay that draws historical trip trajectories as arrows.
  */
 class TripsOverlay : Overlay() {
     private val arrows = mutableListOf<ArrowInfo>()
+    private var maxCount = 1
 
     private val linePaint = android.graphics.Paint().apply {
         isAntiAlias = true
-        color = android.graphics.Color.CYAN
         style = android.graphics.Paint.Style.STROKE
-        alpha = 180
+        alpha = 220
     }
 
     fun updateArrows(list: List<ArrowInfo>) {
         arrows.clear()
         arrows.addAll(list)
+        maxCount = arrows.maxOfOrNull { it.count } ?: 1
     }
 
     override fun draw(canvas: android.graphics.Canvas?, mapView: MapView?, shadow: Boolean) {
@@ -466,14 +506,20 @@ class TripsOverlay : Overlay() {
             projection.toPixels(arrow.start, pStart)
             projection.toPixels(arrow.end, pEnd)
 
-            // Line thickness reflects popularity
-            linePaint.strokeWidth = (2 + arrow.count).coerceAtMost(15).toFloat()
+            // Line thickness & color reflect popularity
+            val popularity = arrow.count.toFloat() / maxCount
+            linePaint.strokeWidth = (2f + popularity * 10f)
+            // Gradient from bright yellow (low) to deep red (high) for better contrast
+            val red = (255 * popularity).toInt().coerceIn(0, 255)
+            val green = (200 * (1f - popularity)).toInt().coerceIn(0, 200)
+            val blue = 50
+            linePaint.color = android.graphics.Color.rgb(red, green, blue)
 
             canvas.drawLine(pStart.x.toFloat(), pStart.y.toFloat(), pEnd.x.toFloat(), pEnd.y.toFloat(), linePaint)
 
             // Arrow head
             val angle = kotlin.math.atan2((pEnd.y - pStart.y).toDouble(), (pEnd.x - pStart.x).toDouble())
-            val arrowLen = 12f + arrow.count * 1.5f
+            val arrowLen = 12f + popularity * 15f
             val angle1 = angle + Math.PI / 8
             val angle2 = angle - Math.PI / 8
 
