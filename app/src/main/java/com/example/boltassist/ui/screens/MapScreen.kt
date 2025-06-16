@@ -154,19 +154,39 @@ fun MapScreen() {
                 )
             }
             
-            // Overlay toggle button (right)
-            var overlaysVisible by remember { mutableStateOf(true) }
-            Button(
-                onClick = { 
-                    overlaysVisible = !overlaysVisible
-                    MapOverlayManager.toggleOverlayVisibility(mapViewState.value, overlaysVisible)
-                    android.util.Log.d("BoltAssist", "Overlays visibility: $overlaysVisible")
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (overlaysVisible) Color(0xFF4CAF50) else Color.Gray
-                )
+            // Right side controls
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(if (overlaysVisible) "🔍 ON" else "🔍 OFF", fontSize = 10.sp)
+                // Trip arrows toggle button
+                var tripsVisible by remember { mutableStateOf(true) }
+                Button(
+                    onClick = { 
+                        tripsVisible = !tripsVisible
+                        MapOverlayManager.toggleTripsVisibility(mapViewState.value, tripsVisible)
+                        android.util.Log.d("BoltAssist", "Trip arrows visibility: $tripsVisible")
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (tripsVisible) Color(0xFF2196F3) else Color.Gray // Blue for trips
+                    )
+                ) {
+                    Text(if (tripsVisible) "🏁 ON" else "🏁 OFF", fontSize = 10.sp)
+                }
+                
+                // All overlays toggle button  
+                var overlaysVisible by remember { mutableStateOf(true) }
+                Button(
+                    onClick = { 
+                        overlaysVisible = !overlaysVisible
+                        MapOverlayManager.toggleOverlayVisibility(mapViewState.value, overlaysVisible)
+                        android.util.Log.d("BoltAssist", "Overlays visibility: $overlaysVisible")
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (overlaysVisible) Color(0xFF4CAF50) else Color.Gray
+                    )
+                ) {
+                    Text(if (overlaysVisible) "🔍 ON" else "🔍 OFF", fontSize = 10.sp)
+                }
             }
         }
         

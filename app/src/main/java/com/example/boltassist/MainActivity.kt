@@ -111,8 +111,17 @@ class MainActivity : ComponentActivity() {
                 // Navigation drawer state
                 val drawerState = rememberDrawerState(DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
-                // Selected screen
-                var selectedScreen by remember { mutableStateOf<Screen>(Screen.Graph) }
+                
+                // Restore last selected screen from SharedPreferences
+                val prefs = remember { getSharedPreferences("BoltAssist", MODE_PRIVATE) }
+                val lastSelectedScreen = remember { 
+                    val savedScreenName = prefs.getString("last_selected_screen", "Graph")
+                    Screen.values().find { it.name == savedScreenName } ?: Screen.Graph
+                }
+                
+                // Selected screen with persistence
+                var selectedScreen by remember { mutableStateOf(lastSelectedScreen) }
+                
                 // Storage path for Settings
                 var displayPath by remember { mutableStateOf("Default App Directory") }
                 // Shared edit mode state
@@ -166,6 +175,8 @@ class MainActivity : ComponentActivity() {
                                     selected = screen == selectedScreen,
                                     onClick = {
                                         selectedScreen = screen
+                                        // Save selected screen to SharedPreferences
+                                        prefs.edit().putString("last_selected_screen", screen.name).apply()
                                         scope.launch { drawerState.close() }
                                     },
                                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)

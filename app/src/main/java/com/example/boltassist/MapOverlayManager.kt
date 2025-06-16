@@ -325,12 +325,11 @@ object MapOverlayManager {
 
         data class Key(val slat: Int, val slng: Int, val elat: Int, val elng: Int)
 
+        // Use simpler approach - always include all trips but weight them by recency
         val groups = mutableMapOf<Key, MutableList<TripData>>()
-        var withHourProximity = false
+        val currentTime = System.currentTimeMillis()
+        
         for (trip in allTrips) {
-            val hDiff = hourDiff(currentHour, hourOfTrip(trip))
-            if (hDiff <= 2) withHourProximity = true // at least one qualifies
-            
             val sLoc = trip.startLocation ?: continue
             val eLoc = trip.endLocation ?: continue
             
@@ -343,34 +342,33 @@ object MapOverlayManager {
             groups.getOrPut(key) { mutableListOf() }.add(trip)
         }
 
-        // If no trips met ±2h criterion, drop the constraint and regroup using all trips
-        if (!withHourProximity) {
-            groups.clear()
-            for (trip in allTrips) {
-                val sLoc = trip.startLocation ?: continue
-                val eLoc = trip.endLocation ?: continue
-                val key = Key(
-                    (sLoc.latitude / grid).toInt(),
-                    (sLoc.longitude / grid).toInt(),
-                    (eLoc.latitude / grid).toInt(),
-                    (eLoc.longitude / grid).toInt()
-                )
-                groups.getOrPut(key) { mutableListOf() }.add(trip)
-            }
-        }
+        android.util.Log.d("BoltAssist", "Trip arrows: Found ${groups.size} route groups from ${allTrips.size} total trips")
 
         // Current driver position (if available) to filter reachable starts
         val curLoc = StreetDataManager.streetDataCache.lastOrNull { it.passengerDemand >= 0 }?.let {
             GeoPoint(it.centerLat, it.centerLng)
         }
 
-        // Build ArrowInfo list from grouped data
-        val rawArrows = groups.values.map { list ->
+        // Build ArrowInfo list from grouped data with recency weighting
+        val rawArrows = groups.values.mapNotNull { list ->
+            if (list.isEmpty()) return@mapNotNull null
+            
+            // Weight by recency - newer trips are more relevant
+            val weightedCount = list.sumOf { trip ->
+                try {
+                    val tripTime = dateFormat.parse(trip.startTime)?.time ?: 0L
+                    val ageHours = (currentTime - tripTime) / (1000 * 60 * 60).toDouble()
+                    // Recent trips get higher weight: full weight for <24h, declining to 0.1 at 7 days
+                    val recencyWeight = kotlin.math.max(0.1, 1.0 - (ageHours / (7 * 24)))
+                    recencyWeight
+                } catch (e: Exception) { 0.1 }
+            }
+            
             val sLat = list.map { it.startLocation!!.latitude }.average()
             val sLng = list.map { it.startLocation!!.longitude }.average()
             val eLat = list.map { it.endLocation!!.latitude }.average()
             val eLng = list.map { it.endLocation!!.longitude }.average()
-            ArrowInfo(GeoPoint(sLat, sLng), GeoPoint(eLat, eLng), list.size)
+            ArrowInfo(GeoPoint(sLat, sLng), GeoPoint(eLat, eLng), weightedCount.toInt().coerceAtLeast(1))
         }
 
         // Filter by reachability (ETA <=15 min) if we have current position
@@ -428,6 +426,26 @@ object MapOverlayManager {
                     mapView.overlays.remove(overlay)
                 }
                 else -> {}
+            }
+        }
+        
+        mapView.invalidate()
+    }
+    
+    fun toggleTripsVisibility(mapView: MapView, visible: Boolean) {
+        tripsOverlay?.let { overlay ->
+            when {
+                visible && !mapView.overlays.contains(overlay) -> {
+                    mapView.overlays.add(overlay)
+                    updateTrips(mapView) // Refresh data when showing
+                }
+                !visible && mapView.overlays.contains(overlay) -> {
+                    mapView.overlays.remove(overlay)
+                }
+                else -> {
+                    // Overlay already in correct state, just refresh if visible
+                    if (visible) updateTrips(mapView)
+                }
             }
         }
         
@@ -508,7 +526,7 @@ class TripsOverlay : Overlay() {
 
             // Line thickness & color reflect popularity
             val popularity = arrow.count.toFloat() / maxCount
-            linePaint.strokeWidth = (2f + popularity * 10f)
+            linePaint.strokeWidth = (4f + popularity * 10f)
             // Gradient from bright yellow (low) to deep red (high) for better contrast
             val red = (255 * popularity).toInt().coerceIn(0, 255)
             val green = (200 * (1f - popularity)).toInt().coerceIn(0, 200)
