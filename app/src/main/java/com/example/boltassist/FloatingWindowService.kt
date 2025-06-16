@@ -503,6 +503,8 @@ class FloatingWindowService : Service() {
                     TrafficDataManager.processLocation(location)
                     // Update street data manager with current location
                     StreetDataManager.updateCurrentLocation(location)
+                    // Re-evaluate RESUME visibility based on latest position
+                    updateResumeButtonVisibility()
                 }
             }
         }
@@ -650,13 +652,26 @@ class FloatingWindowService : Service() {
         expandedView?.let { windowManager.removeView(it) }
     }
     
-    /** Determines if the RESUME button should be visible. */
+    /**
+     * Determines if the RESUME button should be visible.
+     * Visible when either:
+     *   • Less than 60 s passed since last drop-off OR
+     *   • We are within 1 km of that drop-off location.
+     */
     private fun shouldShowResume(): Boolean {
         val id = lastEndedTripId ?: return false
-        // Must still exist & still be within 60-second window
+
+        // Allow resume either within 60 s OR if still within 1 km of drop-off
+        val trip = TripManager.tripsCache.firstOrNull { it.id == id && it.endTime != null } ?: return false
         val withinWindow = (System.currentTimeMillis() - lastEndedTimestamp) < 60_000
-        val stillCompleted = TripManager.tripsCache.any { it.id == id && it.endTime != null }
-        return withinWindow && stillCompleted
+        val withinDistance = currentLocation?.let { curLoc ->
+            trip.endLocation?.let { endLoc ->
+                val res = FloatArray(1)
+                android.location.Location.distanceBetween(curLoc.latitude, curLoc.longitude, endLoc.latitude, endLoc.longitude, res)
+                res[0] <= 1_000f // ≤1 km
+            }
+        } ?: false
+        return withinWindow || withinDistance
     }
 
     private fun updateResumeButtonVisibility() {

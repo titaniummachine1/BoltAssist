@@ -915,9 +915,30 @@ object TripManager {
         val trip = _tripsCache[index]
         if (trip.endTime == null) return trip // already active
 
-        val reopened = trip.copy(endTime = null, endLocation = null)
+        // If the trip was marked as quick, treat its previous END as the new START
+        val isQuickTrip = trip.isQuick || trip.durationMinutes == 0
+
+        val (newStartTime, newStartLoc, newStartStreet) = if (isQuickTrip) {
+            val nowStr = getCurrentTimeString()
+            Triple(nowStr, trip.endLocation ?: trip.startLocation, trip.endStreet)
+        } else {
+            Triple(trip.startTime, trip.startLocation, trip.startStreet)
+        }
+
+        val reopened = trip.copy(
+            startTime = newStartTime,
+            startLocation = newStartLoc,
+            startStreet = newStartStreet,
+            endTime = null,
+            endLocation = null,
+            endStreet = "Unknown",
+            isQuick = false,
+            durationMinutes = 0
+        )
+
         _tripsCache[index] = reopened
         currentTrip = reopened
+
         // Update start time reference for duration calculation
         tripStartTime = try {
             dateFormat.parse(reopened.startTime)?.time ?: System.currentTimeMillis()
