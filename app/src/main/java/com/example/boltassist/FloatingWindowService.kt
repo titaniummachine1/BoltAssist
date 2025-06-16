@@ -578,24 +578,8 @@ class FloatingWindowService : Service() {
 
                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
                 val nowMillis = System.currentTimeMillis()
-                val shouldPrompt = candidate?.let candidateCheck@ { trip ->
-                    try {
-                        val endMillis = dateFormat.parse(trip.endTime!!)?.time ?: return@candidateCheck false
-                        val timeDiff = nowMillis - endMillis
-                        if (timeDiff > 60_000) return@candidateCheck false
-                        val results = FloatArray(1)
-                        trip.endLocation?.let { endLoc ->
-                            android.location.Location.distanceBetween(
-                                endLoc.latitude,
-                                endLoc.longitude,
-                                loc.latitude,
-                                loc.longitude,
-                                results
-                            )
-                        }
-                        results[0] <= 50f
-                    } catch (_: Exception) { false }
-                } ?: false
+                // Resume-notification prompt disabled – reliance on in-overlay RESUME button instead
+                val shouldPrompt = false
 
                 if (shouldPrompt && candidate != null) {
                     showResumeNotification(candidate)
