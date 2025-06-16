@@ -444,7 +444,10 @@ object MapOverlayManager {
                 }
                 else -> {
                     // Overlay already in correct state, just refresh if visible
-                    if (visible) updateTrips(mapView)
+                    if (visible) {
+                        updateTrips(mapView)
+                    }
+                    Unit
                 }
             }
         }

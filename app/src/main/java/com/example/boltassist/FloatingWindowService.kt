@@ -357,7 +357,7 @@ class FloatingWindowService : Service() {
             text = "+"
             textSize = 20f
             setOnClickListener {
-                earnings += 50 // +5 PLN (stored as 0.1 PLN units)
+                earnings += 25 // +2.5 PLN (stored as 0.1 PLN units) - changed from 50 to 25
                 updateMoneyDisplay()
             }
         }
@@ -686,12 +686,12 @@ class FloatingWindowService : Service() {
 
     /**
      * Calculate a default earning suggestion for the next trip based on the **mode** (dominanta)
-     * of the most recent 10 trips to reduce skew from outliers. If no data exists it falls back to
-     * 10 PLN. Returned value is in
-     * 0.1-PLN units (internal representation).
+     * of the most recent 10 trips from entire history to reduce skew from outliers. 
+     * Values are rounded to nearest 2.5 PLN step. If no data exists it falls back to
+     * 10 PLN. Returned value is in 0.1-PLN units (internal representation).
      */
     private fun computeSuggestedEarnings(): Int {
-        // Consider the most recent 10 completed trips (with earnings > 0 PLN)
+        // Consider the most recent 10 completed trips from entire history (with earnings > 0 PLN)
         val recent = TripManager.tripsCache
             .filter { it.endTime != null && it.earningsPLN > 0 }
             .sortedByDescending { it.endTime ?: it.startTime }
@@ -699,12 +699,16 @@ class FloatingWindowService : Service() {
 
         if (recent.isEmpty()) return 100 // 10 PLN default (0.1 units)
 
+        // Find the mode (most common value) from last 10 trips
         val modePln = recent.groupingBy { it.earningsPLN }.eachCount()
             .entries
             .maxWithOrNull(compareBy<Map.Entry<Int, Int>> { it.value }.thenBy { -it.key })
             ?.key ?: 10
 
-        return modePln * 10 // convert PLN -> tenths
+        // Round to nearest 2.5 PLN step (2.5, 5.0, 7.5, 10.0, 12.5, etc.)
+        val roundedPln = ((modePln / 2.5).toInt() * 2.5).coerceAtLeast(2.5)
+
+        return (roundedPln * 10).toInt() // convert PLN -> tenths
     }
 
     /**

@@ -191,7 +191,7 @@ object TripDataManager {
     fun getAdvancedPredictionGrid(): Array<DoubleArray> {
         val grid = Array(7) { DoubleArray(24) { 0.0 } }
         
-        // Implement trip retention/decay: only use the most recent N trips for each category
+        // Get all valid trips, categorize them, and keep only recent ones per category to prevent memory bloat
         val allTrips = TripManager._tripsCache
             .filter { it.endTime != null && it.earningsPLN > 0 }
             .sortedByDescending { it.startTime }
@@ -203,6 +203,7 @@ object TripDataManager {
         val weekendTrips = mutableListOf<TripData>()
         val holidayTrips = mutableListOf<TripData>()
 
+        // Categorize trips but don't limit during categorization
         allTrips.forEach { trip ->
             try {
                 val date = dateFormat.parse(trip.startTime)
@@ -212,25 +213,30 @@ object TripDataManager {
                     val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
                     val isWeekend = (dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY)
 
-                    if (dayTag != null && holidayTrips.size < 200) {
+                    if (dayTag != null) {
                         holidayTrips.add(trip)
-                    } else if (isWeekend && weekendTrips.size < 300) {
+                    } else if (isWeekend) {
                         weekendTrips.add(trip)
-                    } else if (!isWeekend && dayTag == null && weekdayTrips.size < 500) {
+                    } else {
                         weekdayTrips.add(trip)
                     }
                 }
             } catch (e: Exception) { /* ignore parse error */ }
         }
-    
-        val trips = (weekdayTrips + weekendTrips + holidayTrips).distinctBy { it.id }
+
+        // Now limit each category to most recent N trips to prevent excessive memory usage
+        val limitedWeekdayTrips = weekdayTrips.take(500)
+        val limitedWeekendTrips = weekendTrips.take(300) 
+        val limitedHolidayTrips = holidayTrips.take(200)
+        
+        val trips = (limitedWeekdayTrips + limitedWeekendTrips + limitedHolidayTrips).distinctBy { it.id }
 
         if (trips.isEmpty()) {
             android.util.Log.d("BoltAssist", "No trips available for predictions after filtering")
             return grid
         }
         
-        android.util.Log.d("BoltAssist", "Calculating predictions from ${trips.size} trips after decay/retention")
+        android.util.Log.d("BoltAssist", "Calculating predictions from ${trips.size} trips (${limitedWeekdayTrips.size} weekday, ${limitedWeekendTrips.size} weekend, ${limitedHolidayTrips.size} holiday)")
         
         // Build earnings map by first calculating daily totals for each hour slot
         val dailyTotalsMap = Array(7) { Array(24) { mutableMapOf<String, Pair<Double, Boolean>>() } }
