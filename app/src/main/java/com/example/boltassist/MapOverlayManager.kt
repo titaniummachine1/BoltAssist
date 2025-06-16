@@ -245,6 +245,7 @@ class DriversOverlay : Overlay() {
 object MapOverlayManager {
     private var heatmapOverlay: HeatmapOverlay? = null
     private var driversOverlay: DriversOverlay? = null
+    private var tripsOverlay: TripsOverlay? = null
     private var overlaysVisible = true
     
     fun initializeOverlays(mapView: MapView) {
@@ -259,6 +260,13 @@ object MapOverlayManager {
             // Create and add drivers overlay (black circles for competition)
             driversOverlay = DriversOverlay()
             mapView.overlays.add(driversOverlay)
+            
+            // Create and add trips overlay (arrow lines showing historical rides)
+            tripsOverlay = TripsOverlay()
+            mapView.overlays.add(tripsOverlay)
+            
+            // Immediately populate overlays so user sees data without delay
+            refreshAllOverlays(mapView)
             
             android.util.Log.d("BoltAssist", "Map overlays initialized successfully")
         } catch (e: Exception) {
@@ -286,6 +294,65 @@ object MapOverlayManager {
                 mapView.invalidate()
             }
         }
+    }
+    
+    fun updateTrips(mapView: MapView) {
+        if (!overlaysVisible) return
+        val overlay = tripsOverlay ?: return
+
+        // Pick up to 17 trips closest in hour-of-day to current time
+        val allTrips = TripManager.tripsCache.filter { it.startLocation != null && it.endLocation != null }
+        if (allTrips.isEmpty()) return
+
+        val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+
+        fun hourOfTrip(trip: com.example.boltassist.TripData): Int {
+            return try {
+                val date = dateFormat.parse(trip.startTime)
+                val cal = java.util.Calendar.getInstance().apply { time = date }
+                cal.get(java.util.Calendar.HOUR_OF_DAY)
+            } catch (e: Exception) { 0 }
+        }
+
+        fun hourDiff(h1: Int, h2: Int): Int {
+            val diff = kotlin.math.abs(h1 - h2)
+            return kotlin.math.min(diff, 24 - diff)
+        }
+
+        // Cluster trips into dominant routes using 300 m grid cells
+        val grid = 0.003  // ~300 m in degrees
+
+        data class Key(val slat: Int, val slng: Int, val elat: Int, val elng: Int)
+
+        val groups = mutableMapOf<Key, MutableList<TripData>>()
+        for (trip in allTrips) {
+            val hDiff = hourDiff(currentHour, hourOfTrip(trip))
+            if (hDiff > 2) continue // keep within ±2 h window to stay time-relevant
+
+            val sLoc = trip.startLocation ?: continue
+            val eLoc = trip.endLocation ?: continue
+
+            val key = Key(
+                (sLoc.latitude / grid).toInt(),
+                (sLoc.longitude / grid).toInt(),
+                (eLoc.latitude / grid).toInt(),
+                (eLoc.longitude / grid).toInt()
+            )
+            groups.getOrPut(key) { mutableListOf() }.add(trip)
+        }
+
+        // Build ArrowInfo list from grouped data
+        val arrows = groups.values.map { list ->
+            val sLat = list.map { it.startLocation!!.latitude }.average()
+            val sLng = list.map { it.startLocation!!.longitude }.average()
+            val eLat = list.map { it.endLocation!!.latitude }.average()
+            val eLng = list.map { it.endLocation!!.longitude }.average()
+            ArrowInfo(GeoPoint(sLat, sLng), GeoPoint(eLat, eLng), list.size)
+        }.sortedByDescending { it.count }.take(17)
+
+        overlay.updateArrows(arrows)
+        mapView.invalidate()
     }
     
     fun toggleOverlayVisibility(mapView: MapView, visible: Boolean) {
@@ -319,6 +386,18 @@ object MapOverlayManager {
             }
         }
         
+        tripsOverlay?.let { overlay ->
+            when {
+                visible && !mapView.overlays.contains(overlay) -> {
+                    mapView.overlays.add(overlay)
+                }
+                !visible && mapView.overlays.contains(overlay) -> {
+                    mapView.overlays.remove(overlay)
+                }
+                else -> {}
+            }
+        }
+        
         mapView.invalidate()
     }
     
@@ -341,6 +420,7 @@ object MapOverlayManager {
     fun refreshAllOverlays(mapView: MapView) {
         updateHeatmap(mapView)
         updateDrivers(mapView)
+        updateTrips(mapView)
         android.util.Log.d("BoltAssist", "All overlays refreshed")
     }
     
@@ -353,5 +433,57 @@ object MapOverlayManager {
         val predictions = StreetDataManager.getStreetPredictions().size
         
         return "Stats: $demandPoints demand, $supplyPoints supply, $predictions predictions"
+    }
+}
+
+data class ArrowInfo(val start: GeoPoint, val end: GeoPoint, val count: Int)
+
+/**
+ * Overlay that draws historical trip trajectories as arrows.
+ */
+class TripsOverlay : Overlay() {
+    private val arrows = mutableListOf<ArrowInfo>()
+
+    private val linePaint = android.graphics.Paint().apply {
+        isAntiAlias = true
+        color = android.graphics.Color.CYAN
+        style = android.graphics.Paint.Style.STROKE
+        alpha = 180
+    }
+
+    fun updateArrows(list: List<ArrowInfo>) {
+        arrows.clear()
+        arrows.addAll(list)
+    }
+
+    override fun draw(canvas: android.graphics.Canvas?, mapView: MapView?, shadow: Boolean) {
+        if (shadow || canvas == null || mapView == null) return
+
+        val projection = mapView.projection
+        for (arrow in arrows) {
+            val pStart = android.graphics.Point()
+            val pEnd = android.graphics.Point()
+            projection.toPixels(arrow.start, pStart)
+            projection.toPixels(arrow.end, pEnd)
+
+            // Line thickness reflects popularity
+            linePaint.strokeWidth = (2 + arrow.count).coerceAtMost(15).toFloat()
+
+            canvas.drawLine(pStart.x.toFloat(), pStart.y.toFloat(), pEnd.x.toFloat(), pEnd.y.toFloat(), linePaint)
+
+            // Arrow head
+            val angle = kotlin.math.atan2((pEnd.y - pStart.y).toDouble(), (pEnd.x - pStart.x).toDouble())
+            val arrowLen = 12f + arrow.count * 1.5f
+            val angle1 = angle + Math.PI / 8
+            val angle2 = angle - Math.PI / 8
+
+            val x1 = pEnd.x - arrowLen * kotlin.math.cos(angle1).toFloat()
+            val y1 = pEnd.y - arrowLen * kotlin.math.sin(angle1).toFloat()
+            val x2 = pEnd.x - arrowLen * kotlin.math.cos(angle2).toFloat()
+            val y2 = pEnd.y - arrowLen * kotlin.math.sin(angle2).toFloat()
+
+            canvas.drawLine(pEnd.x.toFloat(), pEnd.y.toFloat(), x1, y1, linePaint)
+            canvas.drawLine(pEnd.x.toFloat(), pEnd.y.toFloat(), x2, y2, linePaint)
+        }
     }
 } 
