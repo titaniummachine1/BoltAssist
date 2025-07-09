@@ -10,6 +10,7 @@ import java.util.*
 import androidx.compose.runtime.mutableStateListOf
 import kotlinx.coroutines.*
 import com.example.boltassist.TimeBucketConfig
+import com.example.boltassist.AppConfig
 
 /**
  * Represents demand/supply data for a specific street segment at a specific time
@@ -168,8 +169,8 @@ object StreetDataManager {
             val distanceKm = currentLoc.distanceTo(streetLocation) / 1000.0
             if (distanceKm > maxDistanceKm) return@forEach
             
-            // Calculate travel time assuming 40 km/h average speed
-            val travelTimeMinutes = (distanceKm / 40.0 * 60).toInt()
+            // Calculate travel time using configurable average speed
+            val travelTimeMinutes = (distanceKm / AppConfig.AVERAGE_DRIVER_SPEED_KMH * 60).toInt()
             
             // Calculate future time bucket when we'd arrive (using 15-minute buckets)
             val futureTime = Calendar.getInstance().apply {

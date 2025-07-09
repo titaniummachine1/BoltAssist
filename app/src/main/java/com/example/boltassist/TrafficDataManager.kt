@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateListOf
 import kotlinx.coroutines.*
 import java.net.HttpURLConnection
 import java.net.URL
+import com.example.boltassist.AppConfig
 
 data class TrafficData(
     val id: String = UUID.randomUUID().toString(),
@@ -30,7 +31,7 @@ data class TrafficData(
 
 // Kalman filter for speed prediction per road segment and time bucket
 data class SpeedKalmanState(
-    var estimate: Double = 30.0,       // Start with 30 km/h baseline
+    var estimate: Double = AppConfig.AVERAGE_DRIVER_SPEED_KMH,       // Start with baseline speed
     var errorCovariance: Double = 100.0, // Higher uncertainty for learning
     val processNoise: Double = 2.0,     // Speed can change gradually
     val measurementNoise: Double = 5.0  // GPS/speed measurement noise
@@ -226,7 +227,7 @@ object TrafficDataManager {
         dayOfWeek: Int = getCurrentDayOfWeek(),
         timeBucket: Int = getCurrentTimeBucket()
     ): Double {
-        return speedKalmanStates[streetName]?.get(dayOfWeek)?.get(timeBucket)?.estimate ?: 30.0
+        return speedKalmanStates[streetName]?.get(dayOfWeek)?.get(timeBucket)?.estimate ?: AppConfig.AVERAGE_DRIVER_SPEED_KMH
     }
     
     /**
@@ -239,7 +240,7 @@ object TrafficDataManager {
                 .takeLast(20)
                 .map { it.speedKmh }
                 .average()
-                .takeIf { !it.isNaN() } ?: 30.0
+                .takeIf { !it.isNaN() } ?: AppConfig.AVERAGE_DRIVER_SPEED_KMH
             
             return (routeDistanceMeters / 1000.0) / avgSpeed * 60 // minutes
         }
